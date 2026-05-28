@@ -1,0 +1,96 @@
+# Security scans for the subarr-subgen patch-stack repo.
+#
+# Different scope than subarr's own security.yml:
+#   - No app code lives here — only patches + tooling + Dockerfile.
+#   - bandit / semgrep target scripts/ only (our extraction + validation
+#     helpers) since they execute on user machines via scripts/build.sh.
+#   - pip-audit doesn't apply (we don't ship a Python package).
+#   - trivy scans the BUILT image (upstream subgen + our patches) for
+#     vulnerabilities introduced by upstream's base or our additions.
+
+name: security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Tuesdays 07:00 UTC — staggered away from rebase-test (Mon 06:00 UTC)
+    # so failures don't cascade in a single morning.
+    - cron: "0 7 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  bandit:
+    name: bandit (scripts/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install bandit[sarif]
+      - name: bandit -r scripts/
+        run: |
+          bandit -r scripts/ -ll -ii --skip B101 \
+                 -f sarif -o bandit.sarif || true
+          bandit -r scripts/ -ll -ii --skip B101
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  semgrep:
+    name: semgrep (pattern security)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: semgrep ci
+        env:
+          SEMGREP_RULES: >-
+            p/security-audit
+            p/secrets
+            p/bash
+        run: semgrep ci --sarif --output=semgrep.sarif || true
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  trivy:
+    name: trivy (patched image CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v3
+      - name: build image (no push)
+        run: bash scripts/build.sh
+      - name: trivy scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: subarr-subgen:dev
+          format: sarif
+          output: trivy.sarif
+          # We fail on HIGH/CRITICAL only — upstream's CUDA base image
+          # ships its own pile of MEDIUM-and-below findings we can't fix.
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
