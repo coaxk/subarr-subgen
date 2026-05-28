@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:54:57 +1000
+Subject: [PATCH 4/7] 0004: /batch returns structured JSONResponse
+
+Was: plain implicit-None return. Now: JSONResponse(dict) with the structured counts (walked / queued / skipped / already_in_queue / no_audio / pending_language_detect) and a 200/404 status code (404 if walked==0, signals 'directory had no files'). subarr's scan_runner consumes this shape. Also adds ?reverse=true passthrough.
+---
+ subgen.py | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index a6cd19b..eb06ee6 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -713,9 +713,13 @@ def receive_emby_webhook(
+ @app.post("/batch")
+ def batch(
+         directory: str = Query(...),
+-        forceLanguage: Union[str, None] = Query(default=None)
++        forceLanguage: Union[str, None] = Query(default=None),
++        reverse: bool = Query(default=False)
+ ):
+-    transcribe_existing(directory, LanguageCode.from_string(forceLanguage))
++    # [v4.1 PATCH] Structured response: dict + 200/404 status.
++    result = transcribe_existing(directory, LanguageCode.from_string(forceLanguage), reverse)
++    status = 404 if (not isinstance(result, dict) or result.get("walked", 0) == 0) else 200
++    return JSONResponse(content=result, status_code=status)
+ 
+ # ============================================================================
+ # REFACTORED /ASR ENDPOINT WITH HASH-BASED DEDUPLICATION AND BLOCKING

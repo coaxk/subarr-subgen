@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:54:56 +1000
+Subject: [PATCH 3/7] 0003: reverse-sort transcribe_existing (full-unit
+ replace)
+
+Replaces transcribe_existing() to (a) accept ?reverse=true so /batch can process newest files first, (b) collect-then-sort instead of walking in directory-iteration order, (c) tally outcomes per file into a structured counts dict for the /batch return shape. Subgenscan.ps1 Option 2 depends on this reverse param.
+---
+ subgen.py | 56 ++++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 49 insertions(+), 7 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index 30dc5e4..a6cd19b 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2342,20 +2342,58 @@ class NewFileHandler(FileSystemEventHandler):
+         self.handle_event(event)
+ 
+ 
+-def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = LanguageCode.NONE):
++def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False):
++    _orig_arg = transcribe_folders
+     transcribe_folders = transcribe_folders.split("|")
+-    logging.info("Starting to search folders to see if we need to create subtitles.")
++    logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
+     logging.debug("The folders are:")
++
++    # [v4.1 PATCH] Structured dispatch counts for /batch return.
++    counts = {
++        "walked": 0,
++        "queued": 0,
++        "skipped": 0,
++        "already_in_queue": 0,
++        "no_audio": 0,
++        "pending_language_detect": 0,
++    }
++
++    def _tally(_result):
++        if _result == "queued":
++            counts["queued"] += 1
++        elif _result == "skipped":
++            counts["skipped"] += 1
++        elif _result == "already_active":
++            counts["already_in_queue"] += 1
++        elif _result == "no_audio":
++            counts["no_audio"] += 1
++        elif _result == "detect_pending":
++            counts["pending_language_detect"] += 1
++
++    # [v4 PATCH] Collect files first, then sort with optional reverse
++    file_list = []
+     for path in transcribe_folders:
+         logging.debug(path)
+         for root, dirs, files in os.walk(path):
+             for file in files:
+                 file_path = os.path.join(root, file)
+-                gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
+-        # if the path specified was actually a single file and not a folder, process it
+-        if os.path.isfile(path):
+-            if has_audio(path):
+-                gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
++                file_list.append(file_path)
++
++    file_list.sort(reverse=reverse)
++
++    for file_path in file_list:
++        counts["walked"] += 1
++        _tally(gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage))
++
++    # if the path specified was actually a single file and not a folder, process it
++    # NOTE: preserves upstream/live behaviour (uses last loop 'path'); latent
++    # only on single-file input, which Subgenscan never sends. Not "fixed"
++    # here intentionally -- updates must not alter untested paths.
++    if os.path.isfile(path):
++        if has_audio(path):
++            counts["walked"] += 1
++            _tally(gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage))
++
+     # Set up the observer to watch for new files
+     if monitor:
+         observer = Observer()
+@@ -2366,6 +2404,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+         observer.start()
+         logging.info("Finished searching and queueing files for transcription. Now watching for new files.")
+ 
++    counts["path"] = _orig_arg
++    counts["reverse"] = reverse
++    return counts
++
+ 
+ if __name__ == "__main__":
+     # [v4 PATCH] Eager model load on boot (ensures download/verify at startup)

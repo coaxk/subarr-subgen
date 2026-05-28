@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:54:56 +1000
+Subject: [PATCH 2/7] 0002: eager model load on boot
+
+Loads + verifies the Whisper model at container start instead of lazily on first transcribe request. Means first-request latency is predictable and download errors fail fast on boot, not 10 minutes into a scan. Also clears VRAM after the eager-verify when clear_vram_on_complete is set.
+---
+ subgen.py | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/subgen.py b/subgen.py
+index 225bcc7..30dc5e4 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2368,6 +2368,25 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+ 
+ 
+ if __name__ == "__main__":
++    # [v4 PATCH] Eager model load on boot (ensures download/verify at startup)
++    logging.info("--- [Startup] Eager model load check ---")
++    try:
++        from stable_whisper import load_faster_whisper
++        _tm = load_faster_whisper(whisper_model, device=transcribe_device,
++                                  compute_type=compute_type,
++                                  download_root='/subgen/models')
++        logging.info("--- [Startup] Model verified ---")
++        if clear_vram_on_complete:
++            logging.info("--- [Startup] Clearing VRAM ---")
++            _tm.model.unload_model()
++            del _tm
++            if torch.cuda.is_available():
++                torch.cuda.empty_cache()
++            gc.collect()
++    except Exception as _e:
++        logging.error(f"Startup eager load failed: {_e}")
++    # ------------------------------------------------------------------
++
+     import uvicorn
+     logging.info(f"Subgen v{subgen_version}")
+     logging.info(f"Threads: {str(whisper_threads)}, Concurrent transcriptions: {str(concurrent_transcriptions)}")

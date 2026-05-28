@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:54:57 +1000
+Subject: [PATCH 7/7] 0007: DeduplicatedQueue type-tracking + GET /queue
+ endpoint
+
+DeduplicatedQueue's _queued / _processing become dict[path->type] instead of bare set[path], so get_queued_tasks / get_processing_tasks return list[{path, type}] dicts. Public method signatures (put/get/mark_done/is_active/is_idle) preserved.
+
+Adds GET /queue endpoint returning {queued, processing, queued_count, processing_count, idle, version} for subarr's header counter, completion watcher, and Activity tab.
+---
+ subgen.py | 41 +++++++++++++++++++++++++++++++----------
+ 1 file changed, 31 insertions(+), 10 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index a82c8b1..dda2740 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -299,11 +299,17 @@ def generate_audio_hash(audio_content: bytes, task: str = None, language: str =
+ # ============================================================================
+ 
+ class DeduplicatedQueue(queue.PriorityQueue):
+-    """Queue that prevents duplicates, handles priority, and tracks status."""
++    """Queue that prevents duplicates, handles priority, and tracks status.
++
++    [v4.2 PATCH] _queued / _processing track (path -> type) instead of bare paths,
++    so get_queued_tasks() / get_processing_tasks() can return structured rows for
++    the GET /queue endpoint. Behaviour-preserving for is_idle / is_active and the
++    put/get/mark_done lifecycle.
++    """
+     def __init__(self):
+         super().__init__()
+-        self._queued = set()     # Tracks task IDs waiting in queue
+-        self._processing = set() # Tracks task IDs currently being handled
++        self._queued = {}        # path -> task_type
++        self._processing = {}    # path -> task_type
+         self._lock = Lock()
+ 
+     def put(self, item, block=True, timeout=None):
+@@ -313,10 +319,10 @@ class DeduplicatedQueue(queue.PriorityQueue):
+                 # Priority: 0 (Detect), 1 (ASR), 2 (Transcribe)
+                 task_type = item.get("type", "transcribe")
+                 priority = 0 if task_type == "detect_language" else (1 if task_type == "asr" else 2)
+-                
++
+                 # PriorityQueue requires a tuple: (priority, tie_breaker, item)
+                 super().put((priority, time.time(), item), block, timeout)
+-                self._queued.add(task_id)
++                self._queued[task_id] = task_type
+                 return True
+             return False
+ 
+@@ -325,14 +331,14 @@ class DeduplicatedQueue(queue.PriorityQueue):
+         priority, timestamp, item = super().get(block, timeout)
+         with self._lock:
+             task_id = item["path"]
+-            self._queued.discard(task_id)
+-            self._processing.add(task_id)
++            task_type = self._queued.pop(task_id, item.get("type", "transcribe"))
++            self._processing[task_id] = task_type
+         return item
+ 
+     def mark_done(self, item):
+         with self._lock:
+             task_id = item["path"]
+-            self._processing.discard(task_id)
++            self._processing.pop(task_id, None)
+ 
+     def is_idle(self):
+         with self._lock:
+@@ -345,11 +351,11 @@ class DeduplicatedQueue(queue.PriorityQueue):
+ 
+     def get_queued_tasks(self):
+         with self._lock:
+-            return list(self._queued)
++            return [{"path": p, "type": t} for p, t in self._queued.items()]
+ 
+     def get_processing_tasks(self):
+         with self._lock:
+-            return list(self._processing)
++            return [{"path": p, "type": t} for p, t in self._processing.items()]
+ 
+ # Start queue
+ task_queue = DeduplicatedQueue()
+@@ -559,6 +565,21 @@ def webui():
+ def status():
+     return {"version": f"Subgen {subgen_version}, stable-ts {stable_whisper.__version__}, faster-whisper {faster_whisper.__version__} ({docker_status})"}
+ 
++# [v4.2 PATCH] GET /queue -- queue introspection for Subarr Monitor tab
++@app.get("/queue")
++def queue_status():
++    queued = task_queue.get_queued_tasks()
++    processing = task_queue.get_processing_tasks()
++    return {
++        "queued": queued,
++        "processing": processing,
++        "queued_count": len(queued),
++        "processing_count": len(processing),
++        "idle": task_queue.is_idle(),
++        "version": subgen_version,
++    }
++
++
+ @app.post("/tautulli")
+ def receive_tautulli_webhook(
+         source: Union[str, None] = Header(None),

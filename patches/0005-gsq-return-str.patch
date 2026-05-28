@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:54:57 +1000
+Subject: [PATCH 5/7] 0005: gen_subtitles_queue returns dispatch string
+
+Was: implicit None on every branch. Now: returns one of 'queued' / 'skipped' / 'already_active' / 'no_audio' / 'detect_pending' so transcribe_existing() can _tally outcomes into the /batch structured response (patch 0004). Pure addition; no caller cared about the return value pre-patch.
+---
+ subgen.py | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index eb06ee6..25ebc24 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -1755,17 +1755,17 @@ def find_default_audio_track_language(audio_tracks):
+             return track['language']
+     return None
+     
+-def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE, **task_kwargs) -> None:
++def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE, **task_kwargs) -> str:
+     global task_queue
+ 
+     # Check if this file is already in the queue or being processed
+     if task_queue.is_active(file_path):
+         logging.debug(f"Ignored: {os.path.basename(file_path)} is already queued or processing.")
+-        return
++        return "already_active"
+ 
+     if not has_audio(file_path):
+         logging.debug(f"{file_path} doesn't have any audio to transcribe!")
+-        return
++        return "no_audio"
+ 
+     # Probe audio tracks once and pass to both helpers to avoid triple ffprobe
+     audio_tracks = get_audio_tracks(file_path)
+@@ -1774,14 +1774,14 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+     force_language = choose_transcribe_language(file_path, force_language, audio_tracks=audio_tracks)
+ 
+     if should_skip_file(file_path, force_language, audio_langs=audio_langs):
+-        return
++        return "skipped"
+ 
+     # Detect audio language via Whisper if no language is known and detection is enabled
+     if not force_language and should_whisper_detect_audio_language:
+         detect_task = {'path': file_path, 'type': "detect_language"}
+         detect_task.update(task_kwargs)
+         task_queue.put(detect_task)
+-        return
++        return "detect_pending"
+ 
+     task = {
+         'path': file_path,
+@@ -1792,6 +1792,7 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+     task.update(task_kwargs)
+ 
+     task_queue.put(task)
++    return "queued"
+ 
+ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=None) -> bool:
+     """

@@ -1,17 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
-Date: Thu, 28 May 2026 22:46:31 +1000
-Subject: [PATCH] 0001: per-language kwargs (SUBGEN_KWARGS_LANG_<CODE>)
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
+Date: Thu, 28 May 2026 22:54:56 +1000
+Subject: [PATCH 1/7] 0001: per-language kwargs (SUBGEN_KWARGS_LANG_<CODE>)
 
-Reads SUBGEN_KWARGS_LANG_<CODE> env vars at startup, merges the matching
-override into transcribe args when language is detected/forced at each
-transcribe site (3 sites: gen_subtitles, gen_subtitles_queue, batch handler).
-
-Idempotent + guarded — exceptions in the per-lang merge fall through to
-upstream behaviour without breaking the transcribe call.
+Reads SUBGEN_KWARGS_LANG_<CODE> env vars at startup, merges the matching override into transcribe args when language is detected/forced at each transcribe site (3 sites).
 ---
  subgen.py | 43 +++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 43 insertions(+)
