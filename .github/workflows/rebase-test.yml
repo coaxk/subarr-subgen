@@ -1,0 +1,80 @@
+# Weekly upstream-drift detector.
+#
+# Pulls latest McCloudS/subgen main, tries to apply our patches against it.
+# Three outcomes:
+#
+#   1. Patches apply clean + validator passes
+#      → upstream hasn't drifted in ways that affect us. Job succeeds quietly.
+#      → If the upstream commit SHA is newer than our pinned SHA, opens a
+#        low-priority "consider bumping" issue.
+#
+#   2. A patch fails to apply
+#      → upstream restructured something we depend on. Opens (or updates) a
+#        sticky issue titled "Upstream drift" with which patch(es) failed
+#        and the conflicting hunks. We manually port.
+#
+#   3. Patches apply but validator fails
+#      → patches landed but the structural contract broke. Probably an
+#        upstream rename / function-signature change. Opens a drift issue.
+#
+# Runs Mondays 06:00 UTC. Also runnable manually.
+
+name: rebase-test
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  rebase-test:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: checkout (no submodules — we fetch upstream fresh)
+        uses: actions/checkout@v4
+
+      - name: clone upstream main
+        run: |
+          rm -rf upstream/
+          git clone --depth 1 https://github.com/McCloudS/subgen.git upstream
+          cd upstream
+          echo "UPSTREAM_HEAD=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "UPSTREAM_HEAD_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: read pinned SHA
+        run: echo "PINNED_SHA=$(cat scripts/upstream.pin)" >> $GITHUB_ENV
+
+      - name: try apply patches
+        id: apply
+        continue-on-error: true
+        run: bash scripts/apply-patches.sh
+
+      - name: try validator
+        id: validate
+        if: steps.apply.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet  # nothing needed, just to set python up
+          python scripts/validate-patched.py
+
+      - name: report — clean drift (new upstream, patches still apply)
+        if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD != env.PINNED_SHA
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Upstream bump available: ${{ env.UPSTREAM_HEAD_SHORT }}"
+          content-filepath: .github/issue-templates/clean-bump.md
+          labels: upstream-bump,low-priority
+
+      - name: report — patches broke
+        if: steps.apply.outcome == 'failure' || steps.validate.outcome == 'failure'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Upstream drift broke patches (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
+          content-filepath: .github/issue-templates/drift-detected.md
+          labels: upstream-drift,blocking
+
+      - name: report — no drift
+        if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD == env.PINNED_SHA
+        run: echo "no drift — upstream HEAD == our pin."

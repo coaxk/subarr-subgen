@@ -1,0 +1,61 @@
+# PR validation: apply patches, validate structure, attempt docker build.
+#
+# The image build is the most expensive job — runs only if patches apply
+# clean and the validator passes. Saves CI minutes on broken PRs.
+
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  patches:
+    name: apply + validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: apply-patches.sh
+        run: bash scripts/apply-patches.sh
+
+      - name: validate-patched.py
+        run: python scripts/validate-patched.py
+
+      - name: upload patched subgen.py as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-subgen-py
+          path: upstream/subgen.py
+          retention-days: 7
+
+  build:
+    name: docker build
+    needs: patches
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: build (no push)
+        run: bash scripts/build.sh
+
+      - name: image labels
+        run: docker inspect subarr-subgen:dev --format '{{json .Config.Labels}}' | python -m json.tool

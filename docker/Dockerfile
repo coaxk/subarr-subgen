@@ -1,0 +1,64 @@
+# subarr-subgen — patched McCloudS/subgen image.
+#
+# Layer structure mirrors upstream's Dockerfile (CUDA 12.3 base, apt + torch
+# + pip in separate layers for cache efficiency). Build context is build/,
+# which scripts/build.sh produces by:
+#
+#   1. cp -a upstream/. build/   (vanilla source tree)
+#   2. apply patches in build/   (via apply-patches.sh in upstream/, then
+#      build.sh recopies the patched tree)
+#
+# So when this Dockerfile COPYs subgen.py, it's the patched one.
+#
+# Differs from upstream Dockerfile ONLY by:
+#   - adding OCI image labels for version/source provenance
+#   - taking UPSTREAM_VERSION + PATCH_REV build-args
+#
+# Same base image, same deps, same entrypoint, same CMD — drop-in.
+
+FROM nvidia/cuda:12.3.2-base-ubuntu22.04
+
+ARG UPSTREAM_VERSION=unknown
+ARG PATCH_REV=unknown
+
+LABEL org.opencontainers.image.title="subarr-subgen"
+LABEL org.opencontainers.image.description="McCloudS/subgen + subarr-required patches"
+LABEL org.opencontainers.image.source="https://github.com/coaxk/subarr-subgen"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
+LABEL subarr.subgen.patch_rev="${PATCH_REV}"
+LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
+
+# Apt packages — own layer so pip changes don't re-run apt
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg python3 python3-pip curl gosu tzdata
+
+# Torch — large and rarely changes; own layer so requirements.txt changes don't bust it
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install -U torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# App dependencies — only rebuilds when requirements.txt changes
+COPY requirements.txt /
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install -U -r /requirements.txt \
+    && apt-get purge -y --auto-remove python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /subgen
+
+# App files last — changes here don't bust the layers above.
+# subgen.py is the PATCHED version (apply-patches.sh has already run).
+COPY launcher.py subgen.py language_code.py /subgen/
+
+RUN mkdir -p /cache && chmod 777 /cache
+
+ENV XDG_CACHE_HOME=/cache \
+    HF_HOME=/cache/huggingface \
+    MPLCONFIGDIR=/cache/matplotlib \
+    PYTHONUNBUFFERED=1
+
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "launcher.py"]

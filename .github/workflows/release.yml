@@ -1,0 +1,122 @@
+# Tag-triggered release: build multi-arch image + push to GHCR + cut a
+# GitHub Release with changelog body.
+#
+# Trigger: pushing a tag matching v*.*.*-r* (e.g. v2026.05.3-r1).
+#
+# Image tags published:
+#   ghcr.io/coaxk/subarr-subgen:<UPSTREAM>-r<REV>   (immutable)
+#   ghcr.io/coaxk/subarr-subgen:<UPSTREAM>          (latest -r* for this upstream)
+#   ghcr.io/coaxk/subarr-subgen:latest              (moves on every release)
+#
+# :stable is NOT moved here — that's a manual promotion after 7-day soak,
+# done via workflow_dispatch on a separate `promote-stable.yml` (TODO).
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*-r*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v2026.05.3-r1)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: apply-patches.sh
+        run: bash scripts/apply-patches.sh
+
+      - name: validate-patched.py
+        run: python scripts/validate-patched.py
+
+      - name: derive version tags
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ -z "$TAG" || "$TAG" == "$GITHUB_REF" ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          # Strip leading v and split on -r
+          VERSION="${TAG#v}"
+          UPSTREAM="${VERSION%-r*}"
+          REV="${VERSION#*-r}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
+          echo "rev=$REV" >> $GITHUB_OUTPUT
+          echo "image_full=ghcr.io/coaxk/subarr-subgen:${VERSION}" >> $GITHUB_OUTPUT
+          echo "image_upstream=ghcr.io/coaxk/subarr-subgen:${UPSTREAM}" >> $GITHUB_OUTPUT
+          echo "image_latest=ghcr.io/coaxk/subarr-subgen:latest" >> $GITHUB_OUTPUT
+
+      - name: docker buildx (with QEMU for multi-arch)
+        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: stage build context (patched tree → build/)
+        run: |
+          rm -rf build/
+          mkdir -p build/
+          cp -a upstream/. build/
+          rm -rf build/.git
+
+      - name: build + push multi-arch
+        uses: docker/build-push-action@v5
+        with:
+          context: build/
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
+            PATCH_REV=${{ steps.version.outputs.rev }}
+          tags: |
+            ${{ steps.version.outputs.image_full }}
+            ${{ steps.version.outputs.image_upstream }}
+            ${{ steps.version.outputs.image_latest }}
+
+      - name: create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            **Image**: `${{ steps.version.outputs.image_full }}`
+
+            **Upstream**: McCloudS/subgen `${{ steps.version.outputs.upstream }}` (see `scripts/upstream.pin`)
+            **Patch revision**: `r${{ steps.version.outputs.rev }}`
+
+            ## Patches in this image
+            See [`patches/series`](./patches/series).
+
+            ## Quickstart
+            ```yaml
+            services:
+              subgen:
+                image: ${{ steps.version.outputs.image_full }}
+            ```
