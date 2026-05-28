@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 28 May 2026 22:46:31 +1000
+Subject: [PATCH] 0001: per-language kwargs (SUBGEN_KWARGS_LANG_<CODE>)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reads SUBGEN_KWARGS_LANG_<CODE> env vars at startup, merges the matching
+override into transcribe args when language is detected/forced at each
+transcribe site (3 sites: gen_subtitles, gen_subtitles_queue, batch handler).
+
+Idempotent + guarded — exceptions in the per-lang merge fall through to
+upstream behaviour without breaking the transcribe call.
+---
+ subgen.py | 43 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/subgen.py b/subgen.py
+index 25fd4c3..225bcc7 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -187,6 +187,19 @@ try:
+ except ValueError:
+     kwargs = {}
+     logging.info("kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'")
++
++# [v4 PATCH] PER-LANGUAGE KWARGS  (reads SUBGEN_KWARGS_LANG_<CODE>)
++# Wired into args at each transcribe site below (not dead code).
++language_specific_kwargs = {}
++for _env_k, _env_v in os.environ.items():
++    if _env_k.startswith('SUBGEN_KWARGS_LANG_'):
++        _lc = _env_k.replace('SUBGEN_KWARGS_LANG_', '').lower()
++        try:
++            language_specific_kwargs[_lc] = ast.literal_eval(_env_v)
++            logging.info(f"Loaded per-language kwargs for {_lc}: {language_specific_kwargs[_lc]}")
++        except Exception as _e:
++            logging.error(f"Failed to parse SUBGEN_KWARGS_LANG_{_lc.upper()}: {_e}")
++
+     
+ if transcribe_device == "gpu":
+     transcribe_device = "cuda"
+@@ -929,6 +942,16 @@ def asr_task_worker(task_data: dict) -> None:
+             args['regroup'] = custom_regroup
+ 
+         args.update(kwargs)
++        try:
++            _lc = None
++            if 'force_language' in dir() and force_language is not None:
++                _lc = force_language.to_iso_639_1()
++            elif 'language' in dir() and language:
++                _lc = str(language).lower()
++            if _lc and language_specific_kwargs.get(_lc):
++                args.update(language_specific_kwargs[_lc])
++        except Exception:
++            pass
+         
+         # Detect audio start_time offset from source file (if accessible)
+         audio_offset = get_audio_start_time(video_file) if video_file else 0.0
+@@ -1103,6 +1126,16 @@ def detect_language_from_upload(task_data: dict) -> None:
+             args['input_sr'] = 16000
+ 
+         args.update(kwargs)
++        try:
++            _lc = None
++            if 'force_language' in dir() and force_language is not None:
++                _lc = force_language.to_iso_639_1()
++            elif 'language' in dir() and language:
++                _lc = str(language).lower()
++            if _lc and language_specific_kwargs.get(_lc):
++                args.update(language_specific_kwargs[_lc])
++        except Exception:
++            pass
+         args['verbose'] = False # Hide the confusing progress bar
+         
+         result = model.transcribe(**args)
+@@ -1419,6 +1452,16 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
+             args['regroup'] = custom_regroup
+             
+         args.update(kwargs)
++        try:
++            _lc = None
++            if 'force_language' in dir() and force_language is not None:
++                _lc = force_language.to_iso_639_1()
++            elif 'language' in dir() and language:
++                _lc = str(language).lower()
++            if _lc and language_specific_kwargs.get(_lc):
++                args.update(language_specific_kwargs[_lc])
++        except Exception:
++            pass
+         
+         result = model.transcribe(data, language=force_language.to_iso_639_1(), task=transcription_type, verbose=None, **args)
+ 

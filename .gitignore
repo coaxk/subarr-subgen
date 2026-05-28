@@ -1,0 +1,6 @@
+subgen.py-vanilla-snapshot.bin
+build/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

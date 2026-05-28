@@ -1,0 +1,39 @@
+subarr-subgen
+=============
+
+This repository builds on McCloudS/subgen by applying a small series of
+patches required by the subarr orchestrator (https://github.com/coaxk/subarr).
+
+Upstream project
+----------------
+
+  Project:  McCloudS/subgen
+  URL:      https://github.com/McCloudS/subgen
+  License:  See upstream LICENSE in the submodule at `upstream/` or visit
+            https://github.com/McCloudS/subgen/blob/main/LICENSE
+
+Upstream subgen does the heavy lifting — wrapping faster-whisper, exposing
+the FastAPI service, handling subtitle output. Everything in this repository
+modifies, extends, or builds around that upstream code.
+
+What this repository adds
+-------------------------
+
+  - patches/         — discrete .patch files we apply on top of upstream
+  - scripts/         — build, apply-patches, rebase-test tooling
+  - docker/          — Dockerfile that pulls upstream + applies our patches
+  - tests/           — unit and smoke tests for our patches specifically
+  - .github/         — CI workflows (PR validation, release builds, weekly
+                       rebase-test against upstream main)
+  - docs/            — patch authoring guide, tagging scheme, upstream-sync
+                       process
+
+Distribution
+------------
+
+The published docker image (`ghcr.io/coaxk/subarr-subgen`) is a derived work
+combining upstream subgen + our patches, distributed per upstream's license
+terms. We do not redistribute upstream source code in this repository — the
+submodule pulls it directly from McCloudS/subgen at build time.
+
+Patches authored here are © 2026 Judd Howie / coaxk under MIT (see LICENSE).

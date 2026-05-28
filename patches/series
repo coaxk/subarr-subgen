@@ -1,0 +1,14 @@
+# Patch application order — quilt-style. Read top-to-bottom by
+# scripts/apply-patches.sh. Comments and blank lines are ignored.
+#
+# Smallest, most-isolated patch first (per-language kwargs) — that's the
+# tooling-validation patch. If it doesn't round-trip cleanly, we have a
+# tooling problem, not a patch problem.
+
+0001-per-language-kwargs.patch
+0002-eager-model-load.patch
+0003-reverse-sort-transcribe-existing.patch
+0004-batch-structured-response.patch
+0005-gsq-return-str.patch
+0006-fastapi-jsonresponse-import.patch
+0007-deduplicated-queue-type-tracking-and-queue-endpoint.patch
