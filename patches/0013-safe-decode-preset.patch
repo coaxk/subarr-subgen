@@ -1,0 +1,84 @@
+From 944637143f43f189f570f8c345b3f02a32ad00b0 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Mon, 1 Jun 2026 01:29:29 +1000
+Subject: [PATCH] v4.7: safe-decode preset
+
+---
+ subgen.py | 47 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/subgen.py b/subgen.py
+index 33a8342..5f34e89 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.6'
++subarr_subgen_patch_rev = 'v4.7'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -246,6 +246,47 @@ if convert_to_bool(os.getenv('SUBARR_SUBGEN_DEFAULT_PROMPTS', True)):
+         f"(opt out: SUBARR_SUBGEN_DEFAULT_PROMPTS=false)"
+     )
+ 
++# [v4.7 PATCH] Safe-decode preset (#107). Whisper's default decoder
++# uses condition_on_previous_text=True, which biases each segment on
++# the previous segment's output. On dialog-heavy content this keeps
++# continuity (pronouns/character names stay consistent across cuts);
++# on sparse or music-heavy content it drifts into hallucinations —
++# the same "thanks for watching!" loop everyone has seen.
++#
++# Community wisdom is split. There is no universal winner — that's
++# the point of the A/B framing on the original task. Rather than
++# changing the global default (which would be a silent behaviour
++# change for every existing user), this ships an opt-in preset:
++#
++#   SUBARR_SUBGEN_SAFE_DECODE=true → merge into kwargs:
++#     condition_on_previous_text=False
++#     no_speech_threshold=0.6           (default 0.6, explicit)
++#     compression_ratio_threshold=2.4   (default 2.4, explicit)
++#
++# This is layered AFTER per-language kwargs (above), so a user can
++# override the safe-decode choices per language if they want. e.g.
++# safe-decode on globally + condition_on_previous_text=True for EN
++# specifically is valid: the per-language merge happens at transcribe
++# time, and language_specific_kwargs always wins over the global args.
++SAFE_DECODE_KWARGS = {
++    'condition_on_previous_text': False,
++    'no_speech_threshold': 0.6,
++    'compression_ratio_threshold': 2.4,
++}
++if convert_to_bool(os.getenv('SUBARR_SUBGEN_SAFE_DECODE', False)):
++    # Merge into the SUBGEN_KWARGS global dict (the one model.transcribe
++    # gets via **args at every transcribe site). Existing keys in
++    # SUBGEN_KWARGS still win — the operator's explicit choice trumps
++    # the preset, so a user who knows what they're doing can mix.
++    for _k, _v in SAFE_DECODE_KWARGS.items():
++        if _k not in kwargs:
++            kwargs[_k] = _v
++    logging.info(
++        f"[v4.7] safe-decode preset active "
++        f"(condition_on_previous_text=False + thresholds explicit). "
++        f"Opt out: SUBARR_SUBGEN_SAFE_DECODE=false"
++    )
++
+     
+ if transcribe_device == "gpu":
+     transcribe_device = "cuda"
+@@ -675,6 +716,10 @@ def queue_status():
+             # opts out via SUBARR_SUBGEN_DEFAULT_PROMPTS=false. subarr
+             # can surface "subtitle punctuation seeded" in the UI.
+             "curated_language_prompts": True,
++            # [v4.7 PATCH] Opt-in SUBARR_SUBGEN_SAFE_DECODE preset:
++            # disables condition_on_previous_text + sets explicit silence
++            # thresholds. subarr can surface the toggle in subgen settings.
++            "safe_decode_preset": True,
+         },
+     }
+ 
+-- 
+2.54.0.windows.1
+
