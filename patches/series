@@ -12,3 +12,5 @@
 0005-gsq-return-str.patch
 0006-fastapi-jsonresponse-import.patch
 0007-deduplicated-queue-type-tracking-and-queue-endpoint.patch
+0008-log-language-detection-probability.patch
+0009-audio-language-override.patch

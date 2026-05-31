@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Thu, 29 May 2026 09:00:00 +1000
+Subject: [PATCH 8/8] 0008: log language-detection probability
+
+Surfaces the language-detection confidence score in the "Detected
+language" log line. For translation-only setups (TRANSCRIBE_OR_TRANSLATE=
+translate) a wrong detected source language silently corrupts the
+output without raising any error — the most insidious quality failure
+mode. Logging the probability lets operators spot edge cases (music,
+multilingual content, very short clips) where detection was uncertain
+and the translation should be treated with suspicion.
+
+Uses getattr with a None fallback so the patch is safe if the underlying
+library version doesn't expose language_probability — log line degrades
+to "[probability: unknown]" instead of crashing.
+
+Touches both detection-logging sites (the ASR path at ~line 1170 and the
+detect_language_task path at ~line 1255).
+---
+ subgen.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index dda2740..f226539 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -1167,7 +1167,7 @@ def detect_language_from_upload(task_data: dict) -> None:
+         detected_language = LanguageCode.from_string(result.language)
+         language_code = detected_language.to_iso_639_1()
+         
+-        logging.info(f"Detected language: {detected_language.to_name()} ({language_code}) - ID: {task_id}")
++        logging.info(f"Detected language: {detected_language.to_name()} ({language_code}) [probability: {getattr(result, 'language_probability', None) or 'unknown'}] - ID: {task_id}")
+         
+         # Set the result for the blocking endpoint
+         if result_container:
+@@ -1252,7 +1252,7 @@ def detect_language_task(path, original_task_data=None):
+         result = model.transcribe(audio_segment, verbose=False)
+         detected_language = LanguageCode.from_string(result.language)
+         
+-        logging.info(f"Detected language: {detected_language.to_name()}")
++        logging.info(f"Detected language: {detected_language.to_name()} [probability: {getattr(result, 'language_probability', None) or 'unknown'}]")
+ 
+     except Exception as e:
+         logging.error(f"Error detecting language for file: {e}", exc_info=True)

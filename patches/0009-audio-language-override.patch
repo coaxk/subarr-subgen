@@ -1,0 +1,128 @@
+From 16bf278a1966e817b807fd458dedec4fd36a3e5c Mon Sep 17 00:00:00 2001
+From: coaxk <juddhowie@gmail.com>
+Date: Sun, 31 May 2026 16:50:59 +1000
+Subject: [PATCH] 0009: audio_language_override capability + capability flag
+
+---
+ subgen.py | 53 +++++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 47 insertions(+), 6 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index f226539..c0727d0 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -1,4 +1,8 @@
+ subgen_version = '2026.05.3'
++# [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
++# can detect our extended capabilities (audio_language_override, etc.) and
++# degrade gracefully against vanilla mccloud/subgen which lacks them.
++subarr_subgen_patch_rev = 'v4.3'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -577,6 +581,13 @@ def queue_status():
+         "processing_count": len(processing),
+         "idle": task_queue.is_idle(),
+         "version": subgen_version,
++        # [v4.3 PATCH] subarr capability detection. subarr inspects these flags
++        # on each integration health probe and degrades gracefully (e.g. doesn't
++        # send audio_language_override to a subgen that wouldn't understand it).
++        "subarr_subgen_patch_rev": subarr_subgen_patch_rev,
++        "capabilities": {
++            "audio_language_override": True,
++        },
+     }
+ 
+ 
+@@ -735,10 +746,23 @@ def receive_emby_webhook(
+ def batch(
+         directory: str = Query(...),
+         forceLanguage: Union[str, None] = Query(default=None),
+-        reverse: bool = Query(default=False)
++        reverse: bool = Query(default=False),
++        audio_language_override: Union[str, None] = Query(default=None),
+ ):
+     # [v4.1 PATCH] Structured response: dict + 200/404 status.
+-    result = transcribe_existing(directory, LanguageCode.from_string(forceLanguage), reverse)
++    # [v4.3 PATCH] audio_language_override: authoritative source-language declaration
++    # from subarr. When set, replaces the ffprobe-detected audio language for the
++    # skip-check at should_skip_file step 3b, AND becomes the Whisper source-language
++    # hint (subordinate to forceLanguage if explicitly given). This is the v1.1.1 #224
++    # closer: subarr verifies user-confirmed audio is non-English, propagates to Sonarr,
++    # but the file metadata still claims English → subgen would skip on
++    # SKIP_IF_AUDIO_LANGUAGES match. This override lets verified files pass through
++    # the skip check while preserving the protective default for unverified files.
++    result = transcribe_existing(
++        directory, LanguageCode.from_string(forceLanguage), reverse,
++        audio_language_override=LanguageCode.from_string(audio_language_override)
++            if audio_language_override else None,
++    )
+     status = 404 if (not isinstance(result, dict) or result.get("walked", 0) == 0) else 200
+     return JSONResponse(content=result, status_code=status)
+ 
+@@ -1776,7 +1800,8 @@ def find_default_audio_track_language(audio_tracks):
+             return track['language']
+     return None
+     
+-def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE, **task_kwargs) -> str:
++def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE,
++                        audio_language_override: LanguageCode | None = None, **task_kwargs) -> str:
+     global task_queue
+ 
+     # Check if this file is already in the queue or being processed
+@@ -1792,6 +1817,16 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+     audio_tracks = get_audio_tracks(file_path)
+     audio_langs = [track['language'] for track in audio_tracks]
+ 
++    # [v4.3 PATCH] audio_language_override REPLACES the ffprobe-detected language
++    # for skip-check purposes. This is subarr's authoritative declaration that the
++    # user has verified the actual audio language despite what the file metadata
++    # claims (the bazarr-blind class — file tagged English but actually French/etc).
++    # Also seed force_language if not explicitly set, so Whisper knows the source.
++    if audio_language_override is not None:
++        audio_langs = [audio_language_override]
++        if force_language == LanguageCode.NONE or force_language is None:
++            force_language = audio_language_override
++
+     force_language = choose_transcribe_language(file_path, force_language, audio_tracks=audio_tracks)
+ 
+     if should_skip_file(file_path, force_language, audio_langs=audio_langs):
+@@ -2368,10 +2403,14 @@ class NewFileHandler(FileSystemEventHandler):
+         self.handle_event(event)
+ 
+ 
+-def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False):
++def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False,
++                        audio_language_override : LanguageCode | None = None):
+     _orig_arg = transcribe_folders
+     transcribe_folders = transcribe_folders.split("|")
+     logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
++    if audio_language_override is not None:
++        logging.info(f"[v4.3 PATCH] audio_language_override={audio_language_override.to_name()} — "
++                     f"will bypass SKIP_IF_AUDIO_LANGUAGES check + seed Whisper source.")
+     logging.debug("The folders are:")
+ 
+     # [v4.1 PATCH] Structured dispatch counts for /batch return.
+@@ -2409,7 +2448,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+ 
+     for file_path in file_list:
+         counts["walked"] += 1
+-        _tally(gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage))
++        _tally(gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage,
++                                   audio_language_override=audio_language_override))
+ 
+     # if the path specified was actually a single file and not a folder, process it
+     # NOTE: preserves upstream/live behaviour (uses last loop 'path'); latent
+@@ -2418,7 +2458,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+     if os.path.isfile(path):
+         if has_audio(path):
+             counts["walked"] += 1
+-            _tally(gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage))
++            _tally(gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage,
++                                       audio_language_override=audio_language_override))
+ 
+     # Set up the observer to watch for new files
+     if monitor:
+-- 
+2.54.0.windows.1
+
