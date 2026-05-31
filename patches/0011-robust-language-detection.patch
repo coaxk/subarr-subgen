@@ -1,0 +1,171 @@
+From 46b21ad7e98b8eccbb18ee418c5c4f824a6c70bf Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Mon, 1 Jun 2026 00:59:15 +1000
+Subject: [PATCH] v4.5: robust multi-chunk language detection
+
+---
+ subgen.py | 134 +++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 133 insertions(+), 1 deletion(-)
+
+diff --git a/subgen.py b/subgen.py
+index 6bcbdce..0e70b4d 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.4'
++subarr_subgen_patch_rev = 'v4.5'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -622,6 +622,12 @@ def queue_status():
+             # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
+             # knows whether to render the cancel button enabled or gated.
+             "queue_cancel": True,
++            # [v4.5 PATCH] POST /detect_language_robust samples N audio
++            # chunks across the file and returns per-chunk Whisper detections
++            # + aggregate majority vote. Lets subarr's Layer-3 audio-lang
++            # ground-truth funnel produce calibrated confidence, not the
++            # single-chunk fragile guess that vanilla detect_language gives.
++            "robust_language_detection": True,
+         },
+     }
+ 
+@@ -1367,6 +1373,132 @@ def detect_language_task(path, original_task_data=None):
+                 
+     return task_data
+ 
++# [v4.5 PATCH] Robust multi-chunk language detection. Vanilla detect_language
++# samples a single 30s window at the start of the file — fragile against
++# silent intros, foreign-language opening narration (very common on anime
++# and films), and end-credits music. subarr's Layer-3 ground-truth funnel
++# needs a calibrated confidence signal: a Whisper detection that agrees
++# 3/3 with high probability is trustworthy; one that flips between languages
++# across the file is exactly what should land in the manual review queue.
++#
++# Algorithm:
++#   1. ffprobe the duration.
++#   2. Sample N chunks at evenly spread fractional positions across the
++#      middle 80% of the file (skips opening + closing credits zones by
++#      default — 0.1 to 0.9). For 3 chunks: 0.1, 0.5, 0.9.
++#   3. For each chunk: extract chunk_length_s seconds of audio, run
++#      model.transcribe() (stable-whisper) capturing language + probability.
++#   4. Aggregate via Counter — top language by vote count, confidence is
++#      min(per-chunk-probability) across the agreeing chunks (conservative).
++#
++# Returns the full per-chunk breakdown so the caller can render evidence
++# in the review UI ("EN at 0:30s 0.97 / JA at 30:00 0.41 / EN at 55:00 0.92
++# → marked SUSPECT for review").
++def detect_language_robust_task(path: str, chunks: int = 3, chunk_length_s: int = 30) -> dict:
++    import ffmpeg as _ff
++    from collections import Counter as _Counter
++    result_payload = {
++        "path": path,
++        "chunks": [],
++        "aggregate": {
++            "language": "und",
++            "n_agreeing": 0,
++            "n_total": 0,
++            "min_probability": 0.0,
++        },
++        "n_chunks_requested": chunks,
++        "n_chunks_extracted": 0,
++        "error": None,
++    }
++    try:
++        probe = _ff.probe(path)
++        # 'format' carries duration on container; fall back to first audio stream.
++        duration = float(probe.get('format', {}).get('duration', 0) or 0)
++        if duration <= 0:
++            for s in probe.get('streams', []):
++                if s.get('codec_type') == 'audio' and s.get('duration'):
++                    duration = float(s['duration']); break
++        if duration <= chunk_length_s:
++            # File shorter than one chunk → just do one detection from the start.
++            offsets = [0]
++        else:
++            usable_start = 0.1 * duration
++            usable_end = max(usable_start + chunk_length_s, 0.9 * duration - chunk_length_s)
++            if chunks <= 1 or usable_end <= usable_start:
++                offsets = [usable_start]
++            else:
++                step = (usable_end - usable_start) / (chunks - 1)
++                offsets = [int(usable_start + i * step) for i in range(chunks)]
++        # Make sure we don't run off the end on the final chunk.
++        offsets = [max(0, min(int(o), int(max(0, duration - chunk_length_s)))) for o in offsets]
++        start_model()
++        per_chunk: list[dict] = []
++        for off in offsets:
++            try:
++                audio_seg = extract_audio_segment_to_memory(path, off, chunk_length_s)
++                if not audio_seg:
++                    per_chunk.append({"offset_s": off, "language": "und",
++                                      "probability": 0.0, "error": "extract_failed"})
++                    continue
++                res = model.transcribe(audio_seg, verbose=False)
++                lc = LanguageCode.from_string(res.language)
++                prob = float(getattr(res, 'language_probability', 0.0) or 0.0)
++                per_chunk.append({
++                    "offset_s": off,
++                    "language": lc.to_iso_639_1(),
++                    "language_name": lc.to_name(),
++                    "probability": prob,
++                })
++            except Exception as ce:
++                per_chunk.append({"offset_s": off, "language": "und",
++                                  "probability": 0.0, "error": str(ce)[:200]})
++        # Aggregate. Filter out failed chunks for the vote.
++        valid = [c for c in per_chunk if c.get("language") and c["language"] != "und"]
++        if valid:
++            counter = _Counter(c["language"] for c in valid)
++            top_lang, top_count = counter.most_common(1)[0]
++            agreeing = [c for c in valid if c["language"] == top_lang]
++            min_prob = min((c["probability"] for c in agreeing), default=0.0)
++            result_payload["aggregate"] = {
++                "language": top_lang,
++                "n_agreeing": top_count,
++                "n_total": len(valid),
++                "min_probability": min_prob,
++            }
++        result_payload["chunks"] = per_chunk
++        result_payload["n_chunks_extracted"] = sum(1 for c in per_chunk if not c.get("error"))
++        logging.info(
++            f"Robust detect on {path}: agree={result_payload['aggregate']['n_agreeing']}/"
++            f"{result_payload['aggregate']['n_total']} → "
++            f"{result_payload['aggregate']['language']} "
++            f"(min_prob={result_payload['aggregate']['min_probability']:.3f})"
++        )
++    except Exception as e:
++        logging.error(f"detect_language_robust failed for {path}: {e}", exc_info=True)
++        result_payload["error"] = str(e)[:300]
++    finally:
++        delete_model()
++    return result_payload
++
++
++@app.post("/detect_language_robust")
++def detect_language_robust(
++    path: Union[str, None] = Query(default=None),
++    chunks: int = Query(default=3, ge=1, le=10),
++    chunk_length_s: int = Query(default=30, ge=5, le=120),
++):
++    """[v4.5 PATCH] Multi-chunk Whisper language detection for a local
++    file. Synchronous — blocks the request until all chunks are processed.
++    Total cost ≈ chunks × chunk_length_s × (1/realtime_speed). On an RTX
++    3090 with the medium model, 3×30s ≈ 6-12s wall time including model
++    load. Designed for subarr's review-queue confidence pass, not for
++    bulk runs; do not chain in tight loops."""
++    if not path or not path.strip():
++        return JSONResponse({"error": "path is required"}, status_code=400)
++    return detect_language_robust_task(path.strip(), chunks=chunks,
++                                       chunk_length_s=chunk_length_s)
++
++
+ def extract_audio_segment_to_memory(input_file, start_time, duration):
+     """
+     Extract a segment of audio from input_file, starting at start_time for duration seconds.
+-- 
+2.54.0.windows.1
+
