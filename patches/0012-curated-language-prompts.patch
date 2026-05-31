@@ -1,0 +1,86 @@
+From 50769513e419fb047b96a449b5b7ad06882584f3 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Mon, 1 Jun 2026 01:27:46 +1000
+Subject: [PATCH] v4.6: curated per-lang prompts
+
+---
+ subgen.py | 49 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/subgen.py b/subgen.py
+index 0e70b4d..33a8342 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.5'
++subarr_subgen_patch_rev = 'v4.6'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -204,6 +204,48 @@ for _env_k, _env_v in os.environ.items():
+         except Exception as _e:
+             logging.error(f"Failed to parse SUBGEN_KWARGS_LANG_{_lc.upper()}: {_e}")
+ 
++# [v4.6 PATCH] CURATED PER-LANGUAGE initial_prompts.
++# Whisper outputs unpunctuated runs unless the initial_prompt seeds
++# the model with diverse punctuation. The default empty prompt leads
++# to "hello how are you im fine thanks" subtitle salad — readable but
++# wrong for any downstream re-sync, NLP, or accessibility tooling.
++#
++# These prompts are short (≪ 224 token limit), punctuation-dense, and
++# style-neutral so the bias is "use these marks" rather than "talk
++# like this character". Each is a couple of conversational exchanges
++# in the target language with full ?., commas, exclamation, dashes.
++#
++# Merge semantics: a user-provided SUBGEN_KWARGS_LANG_<CODE> with its
++# OWN initial_prompt always wins (we never overwrite). The default
++# only fills the gap. Set SUBARR_SUBGEN_DEFAULT_PROMPTS=false in env
++# to opt out entirely (e.g. you want zero bias for benchmarking).
++DEFAULT_LANGUAGE_PROMPTS = {
++    'en': "Hello, how are you? I'm fine, thanks. Where are you going? Let's go.",
++    'ja': "こんにちは、お元気ですか？はい、元気です。どこへ行きますか？",
++    'es': "Hola, ¿cómo estás? Estoy bien, gracias. ¿Adónde vas? ¡Vamos!",
++    'fr': "Bonjour, comment allez-vous ? Je vais bien, merci. Où allez-vous ?",
++    'de': "Hallo, wie geht es Ihnen? Mir geht es gut, danke. Wohin gehen Sie?",
++    'it': "Ciao, come stai? Sto bene, grazie. Dove vai? Andiamo!",
++    'pt': "Olá, como vai? Estou bem, obrigado. Para onde vai? Vamos!",
++    'ko': "안녕하세요, 어떻게 지내세요? 잘 지내요. 어디 가세요?",
++    'zh': "你好，你怎么样？我很好，谢谢。你去哪里？我们走吧。",
++    'nl': "Hallo, hoe gaat het? Het gaat goed, dank je. Waar ga je heen?",
++    'ru': "Здравствуйте, как дела? Хорошо, спасибо. Куда вы идёте?",
++    'ar': "مرحباً، كيف حالك؟ أنا بخير، شكراً. إلى أين تذهب؟",
++}
++if convert_to_bool(os.getenv('SUBARR_SUBGEN_DEFAULT_PROMPTS', True)):
++    for _lc, _prompt in DEFAULT_LANGUAGE_PROMPTS.items():
++        _existing = language_specific_kwargs.get(_lc) or {}
++        if 'initial_prompt' not in _existing:
++            _existing = dict(_existing)
++            _existing['initial_prompt'] = _prompt
++            language_specific_kwargs[_lc] = _existing
++    logging.info(
++        f"[v4.6] curated initial_prompts merged for "
++        f"{len(DEFAULT_LANGUAGE_PROMPTS)} languages "
++        f"(opt out: SUBARR_SUBGEN_DEFAULT_PROMPTS=false)"
++    )
++
+     
+ if transcribe_device == "gpu":
+     transcribe_device = "cuda"
+@@ -628,6 +670,11 @@ def queue_status():
+             # ground-truth funnel produce calibrated confidence, not the
+             # single-chunk fragile guess that vanilla detect_language gives.
+             "robust_language_detection": True,
++            # [v4.6 PATCH] DEFAULT_LANGUAGE_PROMPTS are merged into
++            # language_specific_kwargs at startup unless the operator
++            # opts out via SUBARR_SUBGEN_DEFAULT_PROMPTS=false. subarr
++            # can surface "subtitle punctuation seeded" in the UI.
++            "curated_language_prompts": True,
+         },
+     }
+ 
+-- 
+2.54.0.windows.1
+

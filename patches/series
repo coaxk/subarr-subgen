@@ -16,3 +16,4 @@
 0009-audio-language-override.patch
 0010-queue-cancel.patch
 0011-robust-language-detection.patch
+0012-curated-language-prompts.patch
