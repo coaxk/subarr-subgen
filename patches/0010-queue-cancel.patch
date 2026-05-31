@@ -1,0 +1,131 @@
+From 44a9743e11211cd7a7b37218de7f437aa9be9df9 Mon Sep 17 00:00:00 2001
+From: coaxk <juddhowie@gmail.com>
+Date: Mon, 1 Jun 2026 00:42:38 +1000
+Subject: [PATCH] 0010: v4.4 queue cancel + capability flag
+
+---
+ subgen.py | 83 +++++++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 75 insertions(+), 8 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index c0727d0..6bcbdce 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.3'
++subarr_subgen_patch_rev = 'v4.4'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -331,13 +331,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
+             return False
+ 
+     def get(self, block=True, timeout=None):
+-        # PriorityQueue returns the tuple, we want just the item
+-        priority, timestamp, item = super().get(block, timeout)
+-        with self._lock:
+-            task_id = item["path"]
+-            task_type = self._queued.pop(task_id, item.get("type", "transcribe"))
+-            self._processing[task_id] = task_type
+-        return item
++        # [v4.4 PATCH] Skip lazily-removed entries. When remove() pops
++        # from self._queued but the heap still has the (priority, item)
++        # tuple, get() can re-pop until it finds an item whose path is
++        # still tracked. Bounded by initial queue size; idle worker
++        # threads don't loop indefinitely because PriorityQueue.get()
++        # blocks once empty.
++        while True:
++            priority, timestamp, item = super().get(block, timeout)
++            with self._lock:
++                task_id = item["path"]
++                if task_id not in self._queued:
++                    # Cancelled mid-wait via remove(). Skip and pull next.
++                    # We don't call task_done() here because the existing
++                    # codebase doesn't track unfinished_tasks balance —
++                    # mark_done() is a noop wrt PriorityQueue's join().
++                    continue
++                task_type = self._queued.pop(task_id, item.get("type", "transcribe"))
++                self._processing[task_id] = task_type
++            return item
+ 
+     def mark_done(self, item):
+         with self._lock:
+@@ -361,6 +373,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
+         with self._lock:
+             return [{"path": p, "type": t} for p, t in self._processing.items()]
+ 
++    # [v4.4 PATCH] Lazy removal: pop from the path-tracking dict so the
++    # task no longer "exists" from the API perspective. The actual heap
++    # entry is filtered out at get() time below — we don't mutate the
++    # internal heap because PriorityQueue doesn't expose a safe removal
++    # primitive and direct heap.remove() is O(N) without saving anything.
++    # Lazy removal is the correct pattern for priority queues.
++    def remove(self, task_id):
++        """Cancel a QUEUED task by path. Returns True if cancelled, False
++        if the task was either unknown or already moved to processing.
++        Currently-processing tasks can't be safely cancelled mid-flight
++        (would require killing the worker's transcribe call); subarr's
++        UI gates the cancel button on the 'queued' state for that
++        reason."""
++        with self._lock:
++            if task_id in self._queued:
++                self._queued.pop(task_id, None)
++                return True
++            return False
++
+ # Start queue
+ task_queue = DeduplicatedQueue()
+ 
+@@ -587,10 +618,46 @@ def queue_status():
+         "subarr_subgen_patch_rev": subarr_subgen_patch_rev,
+         "capabilities": {
+             "audio_language_override": True,
++            # [v4.4 PATCH] subarr can now cancel a queued task by POSTing
++            # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
++            # knows whether to render the cancel button enabled or gated.
++            "queue_cancel": True,
+         },
+     }
+ 
+ 
++# [v4.4 PATCH] Cancel a queued task by path. 200 with {cancelled: true}
++# if removed, 200 with {cancelled: false, reason: ...} if the task was
++# already processing or not present (those aren't error states, just
++# negative outcomes). 400 only when path is missing/blank.
++@app.post("/queue/cancel")
++def queue_cancel(path: Union[str, None] = Query(default=None)):
++    if not path or not path.strip():
++        return JSONResponse(
++            {"cancelled": False, "reason": "path is required"},
++            status_code=400,
++        )
++    canonical = path.strip()
++    # Look up the current state first so we can return a useful reason.
++    queued = {t["path"] for t in task_queue.get_queued_tasks()}
++    processing = {t["path"] for t in task_queue.get_processing_tasks()}
++    if canonical in processing:
++        return {
++            "cancelled": False,
++            "reason": "already processing — cancel-mid-flight not supported "
++                      "in v4.4 (restart subgen container to abort).",
++            "path": canonical,
++        }
++    if canonical not in queued:
++        return {
++            "cancelled": False,
++            "reason": "not in queue",
++            "path": canonical,
++        }
++    cancelled = task_queue.remove(canonical)
++    return {"cancelled": cancelled, "path": canonical}
++
++
+ @app.post("/tautulli")
+ def receive_tautulli_webhook(
+         source: Union[str, None] = Header(None),
+-- 
+2.54.0.windows.1
+
