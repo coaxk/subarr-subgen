@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Wed, 4 Jun 2026 20:30:00 +1000
+Subject: [PATCH] v4.9: per-request task on /batch (#131)
+
+POST /batch?task=transcribe|translate overrides the global
+TRANSCRIBE_OR_TRANSLATE for that batch only. Threaded through
+transcribe_existing(task_override) -> gen_subtitles_queue -> gen_subtitles
+-> model.transcribe(task=). Lets the tuning-lab arena drive source-transcribe
+AND candidate-translate through one path-based channel (pairs with v4.8
+kwargs). Advertises capabilities.per_request_task. Additive + backward-compatible.
+
+---
+diff --git a/subgen.py b/subgen.py
+index c92d3ae..2d913fa 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.8'
++subarr_subgen_patch_rev = 'v4.9'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -705,6 +705,11 @@ def queue_status():
+             # (?kwargs=<json>) — overrides global SUBGEN_KWARGS for one batch so
+             # subarr's tuning-lab/tournament arena trials configs without env+restart.
+             "per_request_kwargs": True,
++            # [v4.9 PATCH #131] per-request task (transcribe|translate) on POST
++            # /batch (?task=). Lets the arena drive a source-transcribe AND
++            # candidate-translate from one path-based channel without relying on
++            # the global TRANSCRIBE_OR_TRANSLATE env.
++            "per_request_task": True,
+             # [v4.4 PATCH] subarr can now cancel a queued task by POSTing
+             # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
+             # knows whether to render the cancel button enabled or gated.
+@@ -918,7 +923,13 @@ def batch(
+         reverse: bool = Query(default=False),
+         audio_language_override: Union[str, None] = Query(default=None),
+         kwargs: Union[str, None] = Query(default=None),
++        task: Union[str, None] = Query(default=None, enum=["transcribe", "translate"]),
+ ):
++    # [v4.9 PATCH #131] per-request task override: 'transcribe' or 'translate'
++    # for THIS batch only, instead of the global TRANSCRIBE_OR_TRANSLATE. Lets
++    # subarr's tuning-lab arena run a source-transcribe and candidate-translate
++    # through one path-based channel. Invalid/None → falls back to the global.
++    task_override = task if task in ("transcribe", "translate") else None
+     # [v4.8 PATCH #88] per-request kwargs: a JSON object that OVERRIDES the
+     # global SUBGEN_KWARGS for THIS batch only, so subarr's tuning-lab/tournament
+     # arena can trial configs against the live model without rewriting env +
+@@ -946,6 +957,7 @@ def batch(
+         audio_language_override=LanguageCode.from_string(audio_language_override)
+             if audio_language_override else None,
+         kwargs_override=kwargs_override,
++        task_override=task_override,
+     )
+     status = 404 if (not isinstance(result, dict) or result.get("walked", 0) == 0) else 200
+     return JSONResponse(content=result, status_code=status)
+@@ -2718,7 +2730,12 @@ class NewFileHandler(FileSystemEventHandler):
+ 
+ 
+ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False,
+-                        audio_language_override : LanguageCode | None = None, kwargs_override: dict | None = None):
++                        audio_language_override : LanguageCode | None = None, kwargs_override: dict | None = None,
++                        task_override: str | None = None):
++    # [v4.9 PATCH #131] per-request task: override the global transcribe_or_translate
++    # for this batch only (None → keep the global). Drives gen_subtitles_queue's
++    # transcription_type, which flows to model.transcribe(task=...).
++    _task = task_override or transcribe_or_translate
+     _orig_arg = transcribe_folders
+     transcribe_folders = transcribe_folders.split("|")
+     logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
+@@ -2762,7 +2779,7 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+ 
+     for file_path in file_list:
+         counts["walked"] += 1
+-        _tally(gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage,
++        _tally(gen_subtitles_queue(path_mapping(file_path), _task, forceLanguage,
+                                    audio_language_override=audio_language_override,
+                                    kwargs_override=kwargs_override))
+ 
+@@ -2773,7 +2790,7 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+     if os.path.isfile(path):
+         if has_audio(path):
+             counts["walked"] += 1
+-            _tally(gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage,
++            _tally(gen_subtitles_queue(path_mapping(path), _task, forceLanguage,
+                                        audio_language_override=audio_language_override,
+                                        kwargs_override=kwargs_override))
+ 

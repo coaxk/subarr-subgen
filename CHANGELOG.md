@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the image-tag scheme is
 documented in [docs/tagging.md](./docs/tagging.md).
 
+## [v2026.05.3-r3] - 2026-06-04
+
+### Added
+- `0015-per-request-task` (v4.9, #131) — `task=transcribe|translate` query
+  param on POST /batch overriding the global `TRANSCRIBE_OR_TRANSLATE` for one
+  batch; advertises `capabilities.per_request_task`. Pairs with v4.8 kwargs so
+  subarr's tuning-lab arena drives source-transcribe + candidate-translate over
+  one path-based channel. Additive + backward-compatible (invalid/None task
+  falls back to the global).
+
+### Changed
+- `subarr_subgen_patch_rev` advertised on GET /queue: `v4.8` → `v4.9`.
+
 ## [v2026.05.3-r2] - 2026-06-04
 
 First image release since r1. r1's published image was pinned at the v4.2

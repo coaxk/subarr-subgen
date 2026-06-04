@@ -19,3 +19,4 @@
 0012-curated-language-prompts.patch
 0013-safe-decode-preset.patch
 0014-per-request-kwargs.patch
+0015-per-request-task.patch
