@@ -4,7 +4,36 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the image-tag scheme is
 documented in [docs/tagging.md](./docs/tagging.md).
 
-## [Unreleased]
+## [v2026.05.3-r2] - 2026-06-04
+
+First image release since r1. r1's published image was pinned at the v4.2
+patch set; every patch landed since (patch revs v4.3 → v4.8) had never been
+built into a public image. This release brings
+`ghcr.io/coaxk/subarr-subgen:latest` fully current.
+
+### Added
+- `0008-log-language-detection-probability` — surfaces Whisper's
+  language-detection probability in logs.
+- `0009-audio-language-override` (v4.3) — `audio_language_override` query
+  param on POST /batch + `capabilities` block on GET /queue.
+- `0010-queue-cancel` (v4.4) — `POST /queue/cancel?path=…` with structured
+  not-cancellable reasons.
+- `0011-robust-language-detection` (v4.5) — `POST /detect_language_robust`
+  (N-chunk majority-vote + min-probability aggregate).
+- `0012-curated-language-prompts` (v4.6) — curated per-language Whisper
+  prompts via `SUBARR_SUBGEN_DEFAULT_PROMPTS`.
+- `0013-safe-decode-preset` (v4.7) — hardened decode path so one malformed
+  file can't wedge the worker.
+- `0014-per-request-kwargs` (v4.8, #88) — `kwargs=<json>` query param on
+  POST /batch overriding global + per-language `SUBGEN_KWARGS` for one
+  batch (per-request wins); advertises `capabilities.per_request_kwargs`.
+  Unblocks subarr's tuning-lab/tournament arena. Additive +
+  backward-compatible.
+
+### Changed
+- `subarr_subgen_patch_rev` advertised on GET /queue: `v4.2` → `v4.8`.
+
+## [v2026.05.3-r1] - 2026-05-28
 
 ### Added
 - Initial repo skeleton: README, LICENSE (MIT), NOTICE (upstream

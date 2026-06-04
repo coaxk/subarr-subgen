@@ -18,7 +18,12 @@ Format: pipe-separated markdown. Dates are ISO; status values are
 
 | Rev    | Status     | Date       | Upstream sha | Notes |
 |--------|------------|------------|--------------|-------|
-| v4.3   | healthy    | 2026-05-31 | b4fbc8d      | Adds `audio_language_override` query param on POST /batch + capability advertisement (`subarr_subgen_patch_rev`, `capabilities.audio_language_override`) on GET /queue. Lets subarr verified-audio rows bypass `SKIP_IF_AUDIO_LANGUAGES=eng` without disabling the skip-list globally. |
+| v4.8   | healthy    | 2026-06-04 | b4fbc8d      | Per-request kwargs channel (#88): POST /batch accepts a `kwargs=<json>` query param that overrides global + per-language `SUBGEN_KWARGS` for that batch only (per-request wins). Lets subarr's tuning-lab/tournament arena trial configs against the live model without rewriting env + restarting. Advertises `capabilities.per_request_kwargs`. Additive + backward-compatible. |
+| v4.7   | superseded | 2026-06-01 | b4fbc8d      | Safe-decode preset: hardens the decode path against malformed/edge-case audio so a single bad file can't wedge the worker. |
+| v4.6   | superseded | 2026-06-01 | b4fbc8d      | Curated per-language Whisper prompts (`SUBARR_SUBGEN_DEFAULT_PROMPTS`) — seeds the decoder with language-appropriate priming text. |
+| v4.5   | superseded | 2026-06-01 | b4fbc8d      | `POST /detect_language_robust` — N-chunk Whisper language detection with majority vote + min-probability aggregate. Layer 3 of subarr's audio-ground-truth funnel. Advertises `capabilities.robust_language_detection`. |
+| v4.4   | superseded | 2026-06-01 | b4fbc8d      | `POST /queue/cancel?path=…` — cancel a queued task by canonical path; structured reason when not cancellable. Advertises `capabilities.queue_cancel`. |
+| v4.3   | superseded | 2026-05-31 | b4fbc8d      | Adds `audio_language_override` query param on POST /batch + capability advertisement (`subarr_subgen_patch_rev`, `capabilities.audio_language_override`) on GET /queue. Lets subarr verified-audio rows bypass `SKIP_IF_AUDIO_LANGUAGES=eng` without disabling the skip-list globally. |
 | v4.2   | superseded | 2026-05-28 | b4fbc8d      | Added GET /queue endpoint (dict-keyed `DeduplicatedQueue`). Foundation for subarr's queue monitor. |
 | v4.1   | superseded | 2026-05-27 | 69ecaca      | POST /batch structured response: `{walked, queued, skipped, already_in_queue, no_audio, pending_language_detect}` instead of bare text. Lets subarr scan_runner classify path outcomes. |
 | v4.0   | superseded | 2026-05-26 | 69ecaca      | Per-language `SUBGEN_KWARGS_LANG_<CODE>` block resolution. Auto-picks the right block based on detected/forced audio language. |

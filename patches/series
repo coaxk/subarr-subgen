@@ -18,3 +18,4 @@
 0011-robust-language-detection.patch
 0012-curated-language-prompts.patch
 0013-safe-decode-preset.patch
+0014-per-request-kwargs.patch
