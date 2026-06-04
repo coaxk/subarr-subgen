@@ -1,0 +1,196 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Thu, 5 Jun 2026 09:00:00 +1000
+Subject: [PATCH] v4.10: /asr path-input + per-request kwargs (#131)
+
+POST /asr accepts ?path= (read audio from a subgen-visible path, no upload)
+and ?kwargs=<json> (per-request override), still returning the sub over HTTP.
+The no-shared-scratch arena channel. kwargs folded into the dedup hash;
+task_id hash-based when kwargs present; audio_file optional; worker reads
+from audio_path. Advertises capabilities.asr_arena. Additive + backward-compatible.
+
+---
+diff --git a/subgen.py b/subgen.py
+index 2d913fa..d67401c 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.9'
++subarr_subgen_patch_rev = 'v4.10'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -355,7 +355,7 @@ task_results_lock = Lock()
+ # HASH GENERATION FOR DEDUPLICATION
+ # ============================================================================
+ 
+-def generate_audio_hash(audio_content: bytes, task: str = None, language: str = None) -> str:
++def generate_audio_hash(audio_content: bytes, task: str = None, language: str = None, kwargs: dict = None) -> str:
+     """
+     Generate a deterministic hash from audio content and optional parameters. 
+     
+@@ -377,7 +377,12 @@ def generate_audio_hash(audio_content: bytes, task: str = None, language: str =
+         hash_input += task.encode('utf-8')
+     if language:
+         hash_input += language.encode('utf-8')
+-    
++    # [v4.10 PATCH #131] per-request kwargs must split the dedup cache —
++    # otherwise two arena variants that differ ONLY by kwargs hash identical
++    # and the second silently returns the first's cached result.
++    if kwargs:
++        hash_input += json.dumps(kwargs, sort_keys=True).encode('utf-8')
++
+     full_hash = hashlib.sha256(hash_input).hexdigest()
+     return full_hash[:16] # Use first 16 chars for shorter IDs in logs
+ 
+@@ -710,6 +715,11 @@ def queue_status():
+             # candidate-translate from one path-based channel without relying on
+             # the global TRANSCRIBE_OR_TRANSLATE env.
+             "per_request_task": True,
++            # [v4.10 PATCH #131] /asr accepts ?path= (read from the shared media
++            # mount, no upload) + ?kwargs= (per-request override, folded into the
++            # dedup hash) and returns the sub over HTTP — the no-shared-scratch
++            # arena channel. subarr's tuning lab gates on this.
++            "asr_arena": True,
+             # [v4.4 PATCH] subarr can now cancel a queued task by POSTing
+             # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
+             # knows whether to render the cancel button enabled or gated.
+@@ -972,10 +982,15 @@ async def asr(
+     language: Union[str, None] = Query(default=None),
+     video_file: Union[str, None] = Query(default=None),
+     initial_prompt: Union[str, None] = Query(default=None),
+-    audio_file: UploadFile = File(...),
++    audio_file: UploadFile = File(default=None),
+     encode: bool = Query(default=True, description="Encode audio first through ffmpeg"),
+     output: Union[str, None] = Query(default="srt", enum=["txt", "vtt", "srt", "tsv", "json"]),
+     word_timestamps: bool = Query(default=False, description="Word-level timestamps"),
++    # [v4.10 PATCH #131] arena channel: read audio from a subgen-visible PATH
++    # (no upload — subarr already shares the media mount) + a per-request kwargs
++    # override; the sub still returns over HTTP (no shared scratch needed).
++    path: Union[str, None] = Query(default=None),
++    kwargs: Union[str, None] = Query(default=None),
+ ):
+     """
+     ASR endpoint that uses audio content hash for deduplication. 
+@@ -993,21 +1008,42 @@ async def asr(
+             else f"ASR {task.capitalize()} received"
+         )
+         
+-        # Read audio file content into memory
+-        file_content = await audio_file.read()
+-        
+-        if not file_content:
+-            await audio_file.close()
+-            return {
+-                "status": "error",
+-                "message": "Audio file is empty"
+-            }
+-        
+-        # Generate deterministic hash from audio (and optionally task/language)
+-        audio_hash = generate_audio_hash(file_content, task, language)
+-        
+-        # FIX: Use video file path if available to match TRANSCRIBE tasks
+-        if video_file:
++        # [v4.10 PATCH #131] per-request kwargs override (tuning-lab arena).
++        kwargs_override = None
++        if kwargs:
++            try:
++                _ko = json.loads(kwargs)
++                kwargs_override = _ko if isinstance(_ko, dict) else None
++            except Exception:
++                logging.warning("[#131] /asr kwargs is not a valid JSON object; ignoring it")
++
++        # [v4.10 PATCH #131] Resolve the audio source: path-input (read from a
++        # subgen-visible path — no upload, leverages the shared media mount) or
++        # the classic multipart upload. Exactly one must be supplied.
++        file_content = None
++        audio_path = None
++        if path:
++            audio_path = path_mapping(path)
++            if not os.path.isfile(audio_path):
++                return {"status": "error", "message": f"path not found in subgen: {audio_path}"}
++            video_file = audio_path  # seed offset detection + display + task_id
++            hash_basis = audio_path.encode('utf-8')
++        elif audio_file is not None:
++            file_content = await audio_file.read()
++            if not file_content:
++                await audio_file.close()
++                return {"status": "error", "message": "Audio file is empty"}
++            hash_basis = file_content
++        else:
++            return {"status": "error", "message": "provide either ?path= or an audio_file upload"}
++
++        # Generate deterministic hash from audio + task/language/kwargs.
++        audio_hash = generate_audio_hash(hash_basis, task, language, kwargs_override)
++
++        # Use the mapped file path as task ID to match TRANSCRIBE-task dedup —
++        # BUT only when no per-request kwargs are in play. With kwargs, each
++        # variant must be distinct, so fall back to the kwargs-aware hash.
++        if video_file and not kwargs_override:
+             task_id = path_mapping(video_file)
+             logging.debug(f"Using mapped video file path as task ID for ASR request: {task_id}")
+         else:
+@@ -1035,6 +1071,8 @@ async def asr(
+             'video_file': video_file,
+             'initial_prompt': initial_prompt,
+             'audio_content': file_content,
++            'audio_path': audio_path,          # [v4.10 #131] path-input mode
++            'kwargs_override': kwargs_override, # [v4.10 #131] per-request kwargs
+             'encode': encode,
+             'output': output,
+             'word_timestamps': word_timestamps,
+@@ -1075,7 +1113,8 @@ async def asr(
+         logging.error(f"Error in ASR endpoint: {e}", exc_info=True)
+         return {"status": "error", "message": f"Error: {str(e)}"}
+     finally:
+-        await audio_file.close()
++        if audio_file is not None:  # [v4.10 #131] None in path-input mode
++            await audio_file.close()
+         # Clean up task_results entry after task completes
+         with task_results_lock:
+             if task_id in task_results:
+@@ -1167,17 +1206,23 @@ def asr_task_worker(task_data: dict) -> None:
+         language = task_data['language']
+         video_file = task_data.get('video_file')
+         _initial_prompt = task_data.get('initial_prompt')
+-        file_content = task_data['audio_content']
++        file_content = task_data.get('audio_content')
++        audio_path = task_data.get('audio_path')          # [v4.10 #131]
++        kwargs_override = task_data.get('kwargs_override') # [v4.10 #131]
+         encode = task_data['encode']
+-        
++
+         start_model()
+ 
+         args = {}
+         display_name = os.path.basename(video_file) if video_file else task_id
+         args['progress_callback'] = ProgressHandler(display_name)
+-        
+-        # Handle audio encoding
+-        if encode:
++
++        # Handle audio source
++        if audio_path:
++            # [v4.10 #131] path-input: let stable-ts/ffmpeg read the file from
++            # disk directly — no need to slurp it into memory.
++            args['audio'] = audio_path
++        elif encode:
+             args['audio'] = file_content
+         else:
+             args['audio'] = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
+@@ -1197,7 +1242,11 @@ def asr_task_worker(task_data: dict) -> None:
+                 args.update(language_specific_kwargs[_lc])
+         except Exception:
+             pass
+-        
++        # [v4.10 #131] per-request override wins over global + per-language
++        # kwargs (the tuning-lab arena trials one config per /asr call).
++        if kwargs_override:
++            args.update(kwargs_override)
++
+         # Detect audio start_time offset from source file (if accessible)
+         audio_offset = get_audio_start_time(video_file) if video_file else 0.0
+         

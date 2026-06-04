@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the image-tag scheme is
 documented in [docs/tagging.md](./docs/tagging.md).
 
+## [v2026.05.3-r4] - 2026-06-05
+
+### Added
+- `0016-asr-path-and-kwargs` (v4.10, #131) — POST /asr accepts `path=` (read
+  audio from a subgen-visible path, no upload) + `kwargs=<json>` (per-request
+  override) and returns the sub over HTTP. The no-shared-scratch arena channel
+  for subarr's tuning lab. kwargs folded into `generate_audio_hash` (fixes a
+  latent dedup collision where variants differing only by kwargs returned the
+  same cached result); task_id hash-based when kwargs present; `audio_file`
+  optional; worker reads from `audio_path` without slurping into memory.
+  Advertises `capabilities.asr_arena`.
+
+### Changed
+- `subarr_subgen_patch_rev` advertised on GET /queue: `v4.9` → `v4.10`.
+
 ## [v2026.05.3-r3] - 2026-06-04
 
 ### Added

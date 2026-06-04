@@ -20,3 +20,4 @@
 0013-safe-decode-preset.patch
 0014-per-request-kwargs.patch
 0015-per-request-task.patch
+0016-asr-path-and-kwargs.patch
