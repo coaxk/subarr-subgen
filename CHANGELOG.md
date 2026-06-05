@@ -34,6 +34,16 @@ documented in [docs/tagging.md](./docs/tagging.md).
   the RUNTIME flag value as `capabilities.ignore_forced_subtitles`. Default OFF
   = vanilla behaviour preserved. Additive + backward-compatible.
 
+### Fixed
+- `0020-subgen-kwargs-json-parse` — `SUBGEN_KWARGS` is written as JSON in
+  compose (`true`/`false`/`null`), but the parser used `ast.literal_eval` only,
+  which raises `ValueError` on JSON booleans — so the operator's tuned kwargs
+  silently fell back to `{}` and never applied (found in the tournament Tier-B
+  run, 2026-06-04). `_parse_kwargs_env` now parses JSON first, falls back to a
+  Python literal for back-compat, and warns LOUDLY (`logging.warning`, which
+  reaches the root lastResort handler) when neither parses. No capability or
+  protocol change.
+
 ### Changed
 - `subarr_subgen_patch_rev` advertised on GET /queue: `v4.10` → `v4.13`.
 

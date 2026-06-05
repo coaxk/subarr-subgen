@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Fri, 6 Jun 2026 09:30:00 +1000
+Subject: [PATCH] SUBGEN_KWARGS JSON parse -- booleans were silently dropped (Tier-B)
+
+SUBGEN_KWARGS is written as JSON in compose (true/false/null), but the
+parser used ast.literal_eval only, which raises ValueError on JSON
+booleans -- so the operator's tuned kwargs silently fell back to {} and
+never applied (found in the tournament Tier-B run, 2026-06-04). The old
+warning used logging.info, swallowed because logging isn't configured at
+import time. _parse_kwargs_env now tries JSON first, falls back to a
+Python literal for back-compat, and warns LOUDLY (logging.warning reaches
+the root lastResort handler) when neither parses. No capability/protocol
+change; patch_rev stays v4.13.
+
+---
+diff --git a/subgen.py b/subgen.py
+index 09db3e2..c72fcf9 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -195,11 +195,31 @@ show_in_subname_subgen = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', Tru
+ show_in_subname_model = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL', True))
+ 
+ # Advanced Configuration
+-try:
+-    kwargs = ast.literal_eval(os.getenv('SUBGEN_KWARGS', '{}') or '{}')
+-except ValueError:
+-    kwargs = {}
+-    logging.info("kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'")
++def _parse_kwargs_env(raw):
++    """Parse SUBGEN_KWARGS into a dict. It is written as JSON in compose
++    (true/false/null), so parse JSON FIRST; fall back to a Python literal
++    (True/False/None) for back-compat. On failure return {} and warn LOUDLY.
++
++    History: this used ast.literal_eval only, which raises ValueError on JSON
++    booleans — so the tuned compose kwargs silently fell back to {} and never
++    applied (Tier-B 2026-06-04). The old warning used logging.info, which is
++    swallowed because logging isn't configured at import time; logging.warning
++    reaches the root lastResort handler, so the failure is now visible."""
++    raw = (raw or '').strip() or '{}'
++    try:
++        return json.loads(raw)
++    except (ValueError, TypeError):
++        pass
++    try:
++        return ast.literal_eval(raw)
++    except (ValueError, SyntaxError):
++        logging.warning(
++            "SUBGEN_KWARGS is not valid JSON or a Python literal; ignoring it "
++            "and using defaults. Value was: %r", raw[:200])
++        return {}
++
++
++kwargs = _parse_kwargs_env(os.getenv('SUBGEN_KWARGS', '{}'))
+ 
+ # [v4 PATCH] PER-LANGUAGE KWARGS  (reads SUBGEN_KWARGS_LANG_<CODE>)
+ # Wired into args at each transcribe site below (not dead code).

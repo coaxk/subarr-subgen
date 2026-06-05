@@ -24,3 +24,4 @@
 0017-asr-vanilla-base.patch
 0018-asr-detected-language.patch
 0019-ignore-forced-subtitles.patch
+0020-subgen-kwargs-json-parse.patch
