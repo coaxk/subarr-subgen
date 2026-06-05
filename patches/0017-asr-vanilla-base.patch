@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Fri, 6 Jun 2026 09:00:00 +1000
+Subject: [PATCH] v4.11: /asr ?base=vanilla — skip global + per-language kwargs (#131)
+
+POST /asr accepts ?base=vanilla, which runs the recipe against library
+defaults + the per-request kwargs ONLY — the global SUBGEN_KWARGS and the
+per-language layers are SKIPPED. This makes a tuning-lab sweep a property of
+the recipe, not of the operator's accumulated env, so results are comparable
+across users (federated #124). The base value is folded into the dedup hash
+(a vanilla run must not collide with a global run of the same file) and the
+file-path task_id shortcut is gated to the plain global path. Advertises
+capabilities.asr_vanilla_base. Additive + backward-compatible (default global).
+
+---
+diff --git a/subgen.py b/subgen.py
+index d67401c..5096230 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -355,7 +355,7 @@ task_results_lock = Lock()
+ # HASH GENERATION FOR DEDUPLICATION
+ # ============================================================================
+ 
+-def generate_audio_hash(audio_content: bytes, task: str = None, language: str = None, kwargs: dict = None) -> str:
++def generate_audio_hash(audio_content: bytes, task: str = None, language: str = None, kwargs: dict = None, base: str = None) -> str:
+     """
+     Generate a deterministic hash from audio content and optional parameters. 
+     
+@@ -382,6 +382,11 @@ def generate_audio_hash(audio_content: bytes, task: str = None, language: str =
+     # and the second silently returns the first's cached result.
+     if kwargs:
+         hash_input += json.dumps(kwargs, sort_keys=True).encode('utf-8')
++    # [v4.11 PATCH #131] base mode must split the cache too — the SAME recipe
++    # run from vanilla vs from the global base is a different config and must
++    # not collide on the dedup hash.
++    if base:
++        hash_input += f"base={base}".encode('utf-8')
+ 
+     full_hash = hashlib.sha256(hash_input).hexdigest()
+     return full_hash[:16] # Use first 16 chars for shorter IDs in logs
+@@ -720,6 +725,14 @@ def queue_status():
+             # dedup hash) and returns the sub over HTTP — the no-shared-scratch
+             # arena channel. subarr's tuning lab gates on this.
+             "asr_arena": True,
++            # [v4.11 PATCH #131] /asr accepts ?base=vanilla — skip the global
++            # SUBGEN_KWARGS + per-language layers and run library-defaults + the
++            # per-request recipe only. Lets subarr's tuning lab measure recipes
++            # against a canonical base independent of the operator's tuning (so
++            # sweeps are comparable across users — federated #124) without
++            # touching the daily-driver env. subarr gates the vanilla-base
++            # toggle on this flag.
++            "asr_vanilla_base": True,
+             # [v4.4 PATCH] subarr can now cancel a queued task by POSTing
+             # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
+             # knows whether to render the cancel button enabled or gated.
+@@ -991,6 +1004,14 @@ async def asr(
+     # override; the sub still returns over HTTP (no shared scratch needed).
+     path: Union[str, None] = Query(default=None),
+     kwargs: Union[str, None] = Query(default=None),
++    # [v4.11 PATCH #131] base mode for the tuning-lab arena. "global" (default)
++    # = classic behaviour (defaults + global SUBGEN_KWARGS + per-language +
++    # this request's kwargs). "vanilla" = library defaults + this request's
++    # kwargs ONLY — the global + per-language tuning are SKIPPED. The arena
++    # tests from "vanilla" so results are a property of the recipe, not of the
++    # operator's accumulated env, and are comparable across users (federated
++    # #124). Same replace-not-merge primitive will drive adopt-best-settings.
++    base: Union[str, None] = Query(default="global", enum=["global", "vanilla"]),
+ ):
+     """
+     ASR endpoint that uses audio content hash for deduplication. 
+@@ -1017,6 +1038,12 @@ async def asr(
+             except Exception:
+                 logging.warning("[#131] /asr kwargs is not a valid JSON object; ignoring it")
+ 
++        # [v4.11 PATCH #131] base mode — "vanilla" skips global + per-language
++        # kwargs so the recipe runs against a canonical clean base.
++        kwargs_base = "vanilla" if (base or "global").lower() == "vanilla" else "global"
++        if kwargs_base == "vanilla":
++            logging.info("[#131] /asr running from VANILLA base (global + per-language SUBGEN_KWARGS skipped)")
++
+         # [v4.10 PATCH #131] Resolve the audio source: path-input (read from a
+         # subgen-visible path — no upload, leverages the shared media mount) or
+         # the classic multipart upload. Exactly one must be supplied.
+@@ -1037,13 +1064,15 @@ async def asr(
+         else:
+             return {"status": "error", "message": "provide either ?path= or an audio_file upload"}
+ 
+-        # Generate deterministic hash from audio + task/language/kwargs.
+-        audio_hash = generate_audio_hash(hash_basis, task, language, kwargs_override)
++        # Generate deterministic hash from audio + task/language/kwargs/base.
++        audio_hash = generate_audio_hash(hash_basis, task, language, kwargs_override, kwargs_base)
+ 
+         # Use the mapped file path as task ID to match TRANSCRIBE-task dedup —
+-        # BUT only when no per-request kwargs are in play. With kwargs, each
+-        # variant must be distinct, so fall back to the kwargs-aware hash.
+-        if video_file and not kwargs_override:
++        # BUT only on the plain global path (no per-request kwargs, global base).
++        # With kwargs OR a vanilla base, each variant must be distinct, so fall
++        # back to the kwargs/base-aware hash (else a vanilla run collides with a
++        # global run of the same file).
++        if video_file and not kwargs_override and kwargs_base == "global":
+             task_id = path_mapping(video_file)
+             logging.debug(f"Using mapped video file path as task ID for ASR request: {task_id}")
+         else:
+@@ -1073,6 +1102,7 @@ async def asr(
+             'audio_content': file_content,
+             'audio_path': audio_path,          # [v4.10 #131] path-input mode
+             'kwargs_override': kwargs_override, # [v4.10 #131] per-request kwargs
++            'kwargs_base': kwargs_base,         # [v4.11 #131] global | vanilla
+             'encode': encode,
+             'output': output,
+             'word_timestamps': word_timestamps,
+@@ -1209,6 +1239,7 @@ def asr_task_worker(task_data: dict) -> None:
+         file_content = task_data.get('audio_content')
+         audio_path = task_data.get('audio_path')          # [v4.10 #131]
+         kwargs_override = task_data.get('kwargs_override') # [v4.10 #131]
++        kwargs_base = task_data.get('kwargs_base', 'global') # [v4.11 #131]
+         encode = task_data['encode']
+ 
+         start_model()
+@@ -1231,19 +1262,24 @@ def asr_task_worker(task_data: dict) -> None:
+         if custom_regroup and custom_regroup.lower() != 'default':
+             args['regroup'] = custom_regroup
+ 
+-        args.update(kwargs)
+-        try:
+-            _lc = None
+-            if 'force_language' in dir() and force_language is not None:
+-                _lc = force_language.to_iso_639_1()
+-            elif 'language' in dir() and language:
+-                _lc = str(language).lower()
+-            if _lc and language_specific_kwargs.get(_lc):
+-                args.update(language_specific_kwargs[_lc])
+-        except Exception:
+-            pass
+-        # [v4.10 #131] per-request override wins over global + per-language
+-        # kwargs (the tuning-lab arena trials one config per /asr call).
++        # [v4.11 #131] base mode: "vanilla" SKIPS the global SUBGEN_KWARGS and
++        # per-language layers entirely so the request runs from library defaults
++        # + the per-request override only — a canonical, operator-independent
++        # base. "global" (default) keeps the classic merge stack.
++        if kwargs_base != "vanilla":
++            args.update(kwargs)
++            try:
++                _lc = None
++                if 'force_language' in dir() and force_language is not None:
++                    _lc = force_language.to_iso_639_1()
++                elif 'language' in dir() and language:
++                    _lc = str(language).lower()
++                if _lc and language_specific_kwargs.get(_lc):
++                    args.update(language_specific_kwargs[_lc])
++            except Exception:
++                pass
++        # [v4.10 #131] per-request override wins (the tuning-lab arena trials one
++        # config per /asr call); on a vanilla base it IS the only tuning applied.
+         if kwargs_override:
+             args.update(kwargs_override)
+ 

@@ -21,3 +21,6 @@
 0014-per-request-kwargs.patch
 0015-per-request-task.patch
 0016-asr-path-and-kwargs.patch
+0017-asr-vanilla-base.patch
+0018-asr-detected-language.patch
+0019-ignore-forced-subtitles.patch

@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the image-tag scheme is
 documented in [docs/tagging.md](./docs/tagging.md).
 
+## [v2026.05.3-r5] - 2026-06-06
+
+### Added
+- `0017-asr-vanilla-base` (v4.11, #131) — POST /asr accepts `base=vanilla`,
+  running the recipe against library defaults + the per-request kwargs ONLY
+  (the global `SUBGEN_KWARGS` + per-language layers are skipped). Makes a
+  tuning-lab sweep a property of the recipe, not of the operator's accumulated
+  env, so results are comparable across users (federated #124). Base folded into
+  `generate_audio_hash` (a vanilla run must not collide with a global run of the
+  same file) and the file-path task_id shortcut gated to the plain global path.
+  Advertises `capabilities.asr_vanilla_base`. Additive + backward-compatible
+  (default `global`).
+- `0018-asr-detected-language` (v4.12, #131) — `/asr` returns the
+  Whisper-detected source language in an `X-Detected-Language` response header
+  (plus `Access-Control-Expose-Headers` for browser clients), carried out of the
+  worker on `TaskResult.language` (`set_result` now takes an optional
+  `language=`). subarr's arena captures it to label sweeps + (later)
+  group/aggregate per source language. Advertises
+  `capabilities.asr_detected_language`. Additive + backward-compatible.
+- `0019-ignore-forced-subtitles` (v4.13, #79) — `IGNORE_FORCED_SUBTITLES`
+  (legacy `SUBGEN_IGNORE_FORCED_SUBS`): a forced target-language embedded
+  subtitle track is partial coverage (foreign-dialogue only, not a full
+  transcript). Vanilla subgen skips such a file as "subtitle already exists",
+  so a correctly-flagged forced-only gap can never be filled. When on, forced
+  subtitle streams are ignored in `has_internal_subtitle_in_language` so the
+  file gets transcribed instead. Version-tolerant `_subtitle_stream_is_forced`
+  reads the pyav disposition defensively (False on any uncertainty). Advertises
+  the RUNTIME flag value as `capabilities.ignore_forced_subtitles`. Default OFF
+  = vanilla behaviour preserved. Additive + backward-compatible.
+
+### Changed
+- `subarr_subgen_patch_rev` advertised on GET /queue: `v4.10` → `v4.13`.
+
 ## [v2026.05.3-r4] - 2026-06-05
 
 ### Added

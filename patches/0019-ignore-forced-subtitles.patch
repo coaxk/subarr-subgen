@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Fri, 6 Jun 2026 09:10:00 +1000
+Subject: [PATCH] v4.13: IGNORE_FORCED_SUBTITLES -- forced subs are partial coverage (#79)
+
+A "forced" target-language embedded subtitle track only subtitles the
+foreign-language dialogue in an otherwise native-language film -- it is
+NOT a full transcript, so it is only partial coverage. Vanilla subgen
+treats it as "subtitle already exists" and skips the file, so a
+correctly-flagged forced-only gap can never be filled. When the new
+IGNORE_FORCED_SUBTITLES env flag is on, forced subtitle streams are
+IGNORED in has_internal_subtitle_in_language so a forced-only file gets
+transcribed instead of skipped. A version-tolerant _subtitle_stream_is_forced
+helper reads the pyav disposition defensively (returns False on any
+uncertainty). The RUNTIME flag value is advertised as
+capabilities.ignore_forced_subtitles so subarr only presents a forced-only
+row as actionable when the connected subgen will actually fill it. Default
+OFF = vanilla behaviour preserved. Bumps subarr_subgen_patch_rev to v4.13.
+
+---
+diff --git a/subgen.py b/subgen.py
+index 0e53d54..09db3e2 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.10'
++subarr_subgen_patch_rev = 'v4.13'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -157,6 +157,15 @@ webhook_url_completed = os.getenv('WEBHOOK_URL_COMPLETED', '')
+ skip_if_external_sub_exists = get_env_with_fallback('SKIP_IF_EXTERNAL_SUBTITLES_EXIST', 'SKIPIFEXTERNALSUB', False, convert_to_bool)
+ skip_if_target_subtitle_exists = get_env_with_fallback('SKIP_IF_TARGET_SUBTITLES_EXIST', 'SKIP_IF_TO_TRANSCRIBE_SUB_ALREADY_EXIST', True, convert_to_bool)
+ skip_if_internal_sub_language = LanguageCode.from_string(get_env_with_fallback('SKIP_IF_INTERNAL_SUBTITLES_LANGUAGE', 'SKIPIFINTERNALSUBLANG', ''))
++# [v4.13 PATCH #79] subarr-subgen capability: forced subtitles are PARTIAL coverage
++# (a "forced" track only subtitles the foreign-language dialogue in an otherwise
++# native-language film — it is NOT a full transcript). Vanilla subgen treats a
++# forced target-language embedded sub as "subtitle already exists" and SKIPS the
++# file, so subarr's correctly-flagged forced-only gap can never be filled. When
++# this is on, forced subtitle streams are IGNORED when deciding existence, so a
++# forced-only file gets transcribed instead of skipped. Default OFF = vanilla
++# behaviour preserved (this is a subarr-subgen patch-stack capability).
++ignore_forced_subtitles = get_env_with_fallback('IGNORE_FORCED_SUBTITLES', 'SUBGEN_IGNORE_FORCED_SUBS', False, convert_to_bool)
+ plex_queue_next_episode = convert_to_bool(os.getenv('PLEX_QUEUE_NEXT_EPISODE', False))
+ plex_queue_season = convert_to_bool(os.getenv('PLEX_QUEUE_SEASON', False))
+ plex_queue_series = convert_to_bool(os.getenv('PLEX_QUEUE_SERIES', False))
+@@ -758,6 +767,13 @@ def queue_status():
+             # disables condition_on_previous_text + sets explicit silence
+             # thresholds. subarr can surface the toggle in subgen settings.
+             "safe_decode_preset": True,
++            # [v4.13 PATCH #79] forced target-language embedded subs are PARTIAL
++            # coverage; when IGNORE_FORCED_SUBTITLES is on this subgen transcribes
++            # forced-only files instead of skipping them. Exposed as the RUNTIME
++            # value (not just "supported") so subarr only presents a forced-only
++            # row as an actionable gap when the connected subgen will actually
++            # fill it — vanilla/off subgen would still swallow it.
++            "ignore_forced_subtitles": bool(ignore_forced_subtitles),
+         },
+     }
+ 
+@@ -2421,6 +2437,23 @@ def subtitle_exists_in_language(video_file, target_language: LanguageCode):
+     """
+     return has_internal_subtitle_in_language(video_file, target_language) or has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
+ 
++def _subtitle_stream_is_forced(stream) -> bool:
++    """[v4.13 PATCH #79] Best-effort 'forced' disposition read for a pyav subtitle
++    stream, tolerant of pyav-version differences (Disposition flag object, int
++    flag, or stringified flags). Returns False on any uncertainty so we never
++    mis-classify a full subtitle as forced."""
++    try:
++        disp = getattr(stream, 'disposition', None)
++        if disp is None:
++            return False
++        forced = getattr(disp, 'forced', None)
++        if forced is not None:
++            return bool(forced)
++        return 'forced' in str(disp).lower()
++    except Exception:
++        return False
++
++
+ def has_internal_subtitle_in_language(video_file: str, target_language: LanguageCode) -> bool:
+     """
+     Checks whether a video container has an embedded subtitle track in the given language.
+@@ -2438,6 +2471,11 @@ def has_internal_subtitle_in_language(video_file: str, target_language: Language
+                 if stream.type == 'subtitle' and 'language' in stream.metadata:
+                     stream_language = LanguageCode.from_string(stream.metadata.get('language', '').lower())
+                     if stream_language == target_language:
++                        # [v4.13 PATCH #79] forced-only tracks are partial coverage —
++                        # don't let them satisfy "exists" when the capability is on.
++                        if ignore_forced_subtitles and _subtitle_stream_is_forced(stream):
++                            logging.info(f"[#79] Ignoring FORCED {stream_language} subtitle in {os.path.basename(video_file)} — forced subs are partial coverage.")
++                            continue
+                         return True
+             return False
+ 
