@@ -24,6 +24,10 @@ on:
 permissions:
   contents: read
   security-events: write
+  # actions: read is required by codeql-action/upload-sarif so it can read the
+  # workflow run — without it the upload fails with "Resource not accessible by
+  # integration / get-a-workflow-run" and reds the job (#163 follow-up).
+  actions: read
   packages: read
 
 jobs:
@@ -41,7 +45,7 @@ jobs:
                  -f sarif -o bandit.sarif || true
           bandit -r scripts/ -ll -ii --skip B101
       - if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: bandit.sarif
           category: bandit
@@ -63,7 +67,7 @@ jobs:
             p/bash
         run: semgrep ci --sarif --output=semgrep.sarif || true
       - if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -90,7 +94,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
       - if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
           category: trivy
