@@ -104,6 +104,14 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+          # The cu128 torch stack ships a ~2GB libtorch_cuda.so; trivy's
+          # default 5m deadline isn't enough to walk it and it dies with
+          # "context deadline exceeded" (#163 fallout). Give it room.
+          timeout: "20m"
+          # Vuln scan only — secret scanning a multi-GB CUDA image is slow
+          # and low-value here; our own scripts are covered by semgrep
+          # p/secrets in the job above.
+          scanners: vuln
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
         uses: github/codeql-action/upload-sarif@v4
