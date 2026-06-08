@@ -1,7 +1,8 @@
 # subarr-subgen — patched McCloudS/subgen image.
 #
-# Layer structure mirrors upstream's Dockerfile (CUDA 12.3 base, apt + torch
-# + pip in separate layers for cache efficiency). Build context is build/,
+# Layer structure mirrors upstream's Dockerfile (apt + torch + pip in separate
+# layers for cache efficiency). NOTE: this image bumps the CUDA base to 12.8
+# (upstream is still on 12.3) — see the FROM line. Build context is build/,
 # which scripts/build.sh produces by:
 #
 #   1. cp -a upstream/. build/   (vanilla source tree)
@@ -10,13 +11,21 @@
 #
 # So when this Dockerfile COPYs subgen.py, it's the patched one.
 #
-# Differs from upstream Dockerfile ONLY by:
+# Differs from upstream Dockerfile by:
+#   - CUDA base bumped 12.3 -> 12.8 (Blackwell/sm_120 support — see below)
 #   - adding OCI image labels for version/source provenance
 #   - taking UPSTREAM_VERSION + PATCH_REV build-args
 #
-# Same base image, same deps, same entrypoint, same CMD — drop-in.
+# Same deps, same entrypoint, same CMD — drop-in.
 
-FROM nvidia/cuda:12.3.2-base-ubuntu22.04
+# CUDA 12.8 base (was 12.3.2-base): CUDA 12.3's cuBLAS has no sm_120 kernels, so
+# every transcription fails with CUBLAS_STATUS_NOT_SUPPORTED on NVIDIA Blackwell
+# / RTX 50xx GPUs (#163) — CTranslate2 4.5+ has the Blackwell kernels but the
+# cuBLAS underneath was too old. 12.8 ships sm_120 cuBLAS; the cudnn-runtime
+# flavour also bundles cuBLAS + cuDNN at the matching version (the old -base
+# relied on whatever cuBLAS happened to be present). Kept on ubuntu22.04
+# (python3.10) to minimise the blast radius.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 ARG UPSTREAM_VERSION=unknown
 ARG PATCH_REV=unknown
@@ -37,7 +46,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Torch — large and rarely changes; own layer so requirements.txt changes don't bust it
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install -U torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+    python3 -m pip install -U torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # App dependencies — only rebuilds when requirements.txt changes
 COPY requirements.txt /
