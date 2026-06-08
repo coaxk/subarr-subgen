@@ -38,10 +38,15 @@ LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
 LABEL subarr.subgen.patch_rev="${PATCH_REV}"
 LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
 
-# Apt packages — own layer so pip changes don't re-run apt
+# Apt packages — own layer so pip changes don't re-run apt.
+# `apt-get upgrade` pulls base-image security patches (the cuda:12.8 base
+# ships gnupg 2.2.27-3ubuntu2.1, flagged HIGH by trivy as CVE-2025-68973;
+# fix is 2.2.27-3ubuntu2.5). Patching at build time keeps the trivy gate
+# green legitimately rather than suppressing the finding, and hardens the
+# rest of the base packages too.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
         ffmpeg python3 python3-pip curl gosu tzdata
 
 # Torch — large and rarely changes; own layer so requirements.txt changes don't bust it
