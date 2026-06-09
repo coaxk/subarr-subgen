@@ -30,7 +30,11 @@ jobs:
   rebase-test:
     runs-on: ubuntu-latest
     permissions:
-      issues: write
+      contents: read # REQUIRED: without it the token can't check out this
+      # private repo and `actions/checkout` dies with "repository not found"
+      # (a permissions block is exhaustive — unlisted scopes are denied). This
+      # is why the detector silently failed every run since inception.
+      issues: write # open the drift / bump issue
     steps:
       - name: checkout (no submodules — we fetch upstream fresh)
         uses: actions/checkout@v4
