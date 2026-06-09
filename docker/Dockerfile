@@ -73,6 +73,13 @@ ENV XDG_CACHE_HOME=/cache \
     MPLCONFIGDIR=/cache/matplotlib \
     PYTHONUNBUFFERED=1
 
+# [r8] Bake the subarr-tuned subtitle segmentation as the default. "v2-strongpad"
+# won the #168 regroup arena (4 audio langs x 6 configs, full files) and held on
+# held-out languages (de/sr): median CPS ~13-15, %>25 CPS ~8-14%, zero sub-0.5s
+# micro-cues. Overridable at runtime — set CUSTOM_REGROUP="" to disable, or to
+# your own DSL. (subgen reads CUSTOM_REGROUP from the environment.)
+ENV CUSTOM_REGROUP="cm_sp=.* /。/?/？_sg=.5_mg=.3++84_p=.3+.7+1.5_sl=42++++++1"
+
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "launcher.py"]
