@@ -54,6 +54,19 @@ jobs:
       - name: docker buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: free disk space (torch cu128 + CUDA 12.8 base need headroom)
+        run: |
+          # The default GH runner (~14 GB free) can't hold the cudnn-runtime
+          # base + torch cu128's nvidia-* CUDA wheels — the build dies with
+          # "No space left on device" on the torch install. Reclaim the
+          # preinstalled SDKs we never use (~25 GB). Mirrors release.yml. (#163)
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h /
+
       - name: build (no push)
         run: bash scripts/build.sh
 
