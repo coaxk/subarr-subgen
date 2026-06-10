@@ -128,7 +128,7 @@ jobs:
         # Deliberate keep: the action is SHA-pinned, battle-tested on this exact
         # flow (r1-r8), and swapping the release path for an info-level nit is
         # churn where breakage hurts most. Revisit if the pin ever goes stale.
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 # zizmor: ignore[superfluous-actions]
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0 # zizmor: ignore[superfluous-actions]
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
