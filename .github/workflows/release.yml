@@ -31,13 +31,14 @@ jobs:
       packages: write
     steps:
       - name: checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: setup python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
 
@@ -49,10 +50,15 @@ jobs:
 
       - name: derive version tags
         id: version
+        env:
+          # Env indirection instead of inline ${{ }} expansion in the script —
+          # an expression expanded directly into `run:` becomes shell code
+          # (template injection); an env var is just data. (zizmor)
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           if [[ -z "$TAG" || "$TAG" == "$GITHUB_REF" ]]; then
-            TAG="${{ inputs.tag }}"
+            TAG="$INPUT_TAG"
           fi
           # Strip leading v and split on -r
           VERSION="${TAG#v}"
@@ -66,7 +72,7 @@ jobs:
           echo "image_upstream=ghcr.io/coaxk/subarr-subgen:${UPSTREAM}" >> $GITHUB_OUTPUT
           echo "image_latest=ghcr.io/coaxk/subarr-subgen:latest" >> $GITHUB_OUTPUT
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
       # Note: linux/arm64 builds are deliberately out of scope for v1.0.
       # The upstream subgen NVIDIA CUDA base image targets amd64 and ARM64
       # isn't a realistic homelab combo for whisper transcription. Users
@@ -76,7 +82,7 @@ jobs:
       # is available.
 
       - name: login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -103,7 +109,7 @@ jobs:
           rm -rf build/.git
 
       - name: build + push (linux/amd64)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: build/
           file: docker/Dockerfile
@@ -118,7 +124,11 @@ jobs:
             ${{ steps.version.outputs.image_latest }}
 
       - name: create GitHub release
-        uses: softprops/action-gh-release@v2
+        # zizmor suggests `gh release create` instead of a third-party action.
+        # Deliberate keep: the action is SHA-pinned, battle-tested on this exact
+        # flow (r1-r8), and swapping the release path for an info-level nit is
+        # churn where breakage hurts most. Revisit if the pin ever goes stale.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 # zizmor: ignore[superfluous-actions]
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}

@@ -12,18 +12,41 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least-privilege: every job here only reads the repo (checkout + build).
+permissions:
+  contents: read
+
 jobs:
+  zizmor:
+    # Blocking workflow-security audit — mirrors coaxk/subarr's gate so the
+    # hardening (hash-pinned actions, least-privilege permissions, pinned
+    # images) can't silently regress.
+    name: zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install zizmor==1.25.2
+      - run: zizmor --persona=regular .github/workflows/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   patches:
     name: apply + validate
     runs-on: ubuntu-latest
     steps:
       - name: checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: setup python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
 
@@ -35,7 +58,7 @@ jobs:
 
       - name: upload patched subgen.py as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: patched-subgen-py
           path: upstream/subgen.py
@@ -47,12 +70,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
       - name: free disk space (torch cu128 + CUDA 12.8 base need headroom)
         run: |

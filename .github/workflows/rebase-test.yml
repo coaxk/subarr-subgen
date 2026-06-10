@@ -37,7 +37,9 @@ jobs:
       issues: write # open the drift / bump issue
     steps:
       - name: checkout (no submodules — we fetch upstream fresh)
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: clone upstream main
         run: |
@@ -65,7 +67,7 @@ jobs:
 
       - name: report — clean drift (new upstream, patches still apply)
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD != env.PINNED_SHA
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5
         with:
           title: "Upstream bump available: ${{ env.UPSTREAM_HEAD_SHORT }}"
           content-filepath: .github/issue-templates/clean-bump.md
@@ -73,7 +75,7 @@ jobs:
 
       - name: report — patches broke
         if: steps.apply.outcome == 'failure' || steps.validate.outcome == 'failure'
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5
         with:
           title: "Upstream drift broke patches (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
           content-filepath: .github/issue-templates/drift-detected.md
