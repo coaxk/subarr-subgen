@@ -67,7 +67,7 @@ jobs:
 
       - name: report — clean drift (new upstream, patches still apply)
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD != env.PINNED_SHA
-        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5
+        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
         with:
           title: "Upstream bump available: ${{ env.UPSTREAM_HEAD_SHORT }}"
           content-filepath: .github/issue-templates/clean-bump.md
@@ -75,7 +75,7 @@ jobs:
 
       - name: report — patches broke
         if: steps.apply.outcome == 'failure' || steps.validate.outcome == 'failure'
-        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5
+        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
         with:
           title: "Upstream drift broke patches (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
           content-filepath: .github/issue-templates/drift-detected.md
