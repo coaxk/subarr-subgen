@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: dev <dev@x>
+Date: Sat, 13 Jun 2026 09:00:00 +1000
+Subject: [PATCH] v4.14: runtime /config endpoint with rollback + release tag in caps (#224)
+
+POST /config switches whisper_model and/or compute_type at runtime so
+subarr's guided setup can live-apply a model choice without an env edit
+and container restart. SAFETY CONTRACT: the endpoint always ends on a
+working model -- on any load failure (unknown weights, OOM) it restores
+the previous globals and re-loads the prior model, reporting the outcome
+(422 reason oom/load_failed). It refuses with 409 while anything is
+queued, processing, or running as a direct task (mirrors the
+perform_model_cleanup idle check) because a mid-job model swap would
+corrupt the run. Inputs are allow-listed (faster-whisper model names and
+compute types). Also bakes the GHCR release tag
+(SUBARR_SUBGEN_RELEASE_TAG, default 'dev') into the /queue body so
+subarr's update check compares tags like-for-like, and advertises
+capabilities.runtime_config. Bumps subarr_subgen_patch_rev to v4.14.
+
+---
+diff --git a/subgen.py b/subgen.py
+index c72fcf9..1328544 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.13'
++subarr_subgen_patch_rev = 'v4.14'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+@@ -117,6 +117,13 @@ plexserver = get_env_with_fallback('PLEX_SERVER', 'PLEXSERVER', 'http://192.168.
+ jellyfintoken = get_env_with_fallback('JELLYFIN_TOKEN', 'JELLYFINTOKEN', 'token here')
+ jellyfinserver = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER', 'http://192.168.1.111:8096')
+ 
++# [v4.14 PATCH / subarr#224] The GHCR release tag baked at build time
++# (Dockerfile ARG RELEASE_TAG -> ENV). 'dev' on local builds. Surfaced in
++# /queue caps so subarr's update check compares tags like-for-like.
++# (Lives here, not next to subarr_subgen_patch_rev, because os is not
++# imported until after that header block.)
++subarr_subgen_release_tag = os.getenv('SUBARR_SUBGEN_RELEASE_TAG', 'dev')
++
+ # Whisper Configuration
+ whisper_model = os.getenv('WHISPER_MODEL', 'medium')
+ whisper_threads = int(os.getenv('WHISPER_THREADS', 4))
+@@ -740,6 +747,7 @@ def queue_status():
+         # on each integration health probe and degrades gracefully (e.g. doesn't
+         # send audio_language_override to a subgen that wouldn't understand it).
+         "subarr_subgen_patch_rev": subarr_subgen_patch_rev,
++        "subarr_subgen_release_tag": subarr_subgen_release_tag,
+         "capabilities": {
+             "audio_language_override": True,
+             # [v4.8 PATCH #88] per-request kwargs override on POST /batch
+@@ -794,10 +802,88 @@ def queue_status():
+             # row as an actionable gap when the connected subgen will actually
+             # fill it — vanilla/off subgen would still swallow it.
+             "ignore_forced_subtitles": bool(ignore_forced_subtitles),
++            # [v4.14 PATCH] POST /config can switch model/compute_type at
++            # runtime with rollback — subarr's guided setup live-apply.
++            "runtime_config": True,
+         },
+     }
+ 
+ 
++# [v4.14 PATCH] Runtime model/compute switch for subarr's guided setup.
++# SAFETY CONTRACT: this endpoint always ends on a WORKING model. On any
++# load failure (bad name, OOM) it rolls back the globals and re-loads the
++# previous model, and reports the outcome. Refuses while jobs are
++# processing (a mid-job model swap would corrupt the run).
++_ALLOWED_RUNTIME_MODELS = {
++    'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en',
++    'medium', 'medium.en', 'large-v1', 'large-v2', 'large-v3',
++    'large-v3-turbo', 'distil-large-v3',
++}
++_ALLOWED_COMPUTE_TYPES = {'auto', 'int8', 'int8_float16', 'float16', 'float32'}
++
++
++@app.post("/config")
++def runtime_config(model_name: str = Query(None, alias="model"),
++                   compute: str = Query(None, alias="compute_type")):
++    global whisper_model, compute_type, model
++    if model_name is None and compute is None:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "nothing_to_change",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    if model_name is not None and model_name not in _ALLOWED_RUNTIME_MODELS:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "unknown_model",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    if compute is not None and compute not in _ALLOWED_COMPUTE_TYPES:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "unknown_compute_type",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    # Busy check mirrors perform_model_cleanup(): the queue must be idle
++    # (nothing queued, nothing processing) AND no direct (/asr-style)
++    # tasks in flight.
++    with active_direct_tasks_lock:
++        busy = (not task_queue.is_idle()) or active_direct_tasks > 0
++    if busy:
++        return JSONResponse(status_code=409, content={
++            "ok": False, "reason": "busy",
++            "detail": "jobs queued or processing; retry when idle",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++
++    prev_model_name, prev_compute = whisper_model, compute_type
++    try:
++        if model is not None:
++            # Mirror the perform_model_cleanup() release idiom.
++            try:
++                model.model.unload_model()
++            except Exception as unload_err:
++                logging.error(f"[runtime_config] unload_model failed: {unload_err}")
++            del model
++            model = None
++            if torch.cuda.is_available():
++                torch.cuda.empty_cache()
++            gc.collect()
++        if model_name is not None:
++            whisper_model = model_name
++        if compute is not None:
++            compute_type = compute
++        start_model()  # raises on bad load / OOM
++        logging.info(f"[runtime_config] switched: model={whisper_model} compute_type={compute_type}")
++        return {"ok": True, "model": whisper_model, "compute_type": compute_type}
++    except Exception as e:
++        logging.error(f"[runtime_config] load failed ({e}); rolling back to {prev_model_name}/{prev_compute}")
++        whisper_model, compute_type = prev_model_name, prev_compute
++        model = None
++        try:
++            start_model()
++        except Exception as e2:
++            logging.error(f"[runtime_config] ROLLBACK LOAD ALSO FAILED: {e2}")
++        return JSONResponse(status_code=422, content={
++            "ok": False,
++            "reason": "oom" if "out of memory" in str(e).lower() else "load_failed",
++            "detail": str(e)[:300],
++            "current_model": whisper_model, "current_compute_type": compute_type})
++
++
+ # [v4.4 PATCH] Cancel a queued task by path. 200 with {cancelled: true}
+ # if removed, 200 with {cancelled: false, reason: ...} if the task was
+ # already processing or not present (those aren't error states, just
