@@ -29,6 +29,13 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 ARG UPSTREAM_VERSION=unknown
 ARG PATCH_REV=unknown
+# [r9 / subarr#224] The GHCR release tag this image was built from
+# (e.g. v2026.05.3-r9). Emitted in the /queue caps body as
+# subarr_subgen_release_tag so subarr's update check compares
+# like-for-like instead of patch-rev vs date-tag (which made every
+# install show a permanent fake "update available").
+ARG RELEASE_TAG=dev
+ENV SUBARR_SUBGEN_RELEASE_TAG="${RELEASE_TAG}"
 
 LABEL org.opencontainers.image.title="subarr-subgen"
 LABEL org.opencontainers.image.description="McCloudS/subgen + subarr-required patches"
@@ -36,6 +43,7 @@ LABEL org.opencontainers.image.source="https://github.com/coaxk/subarr-subgen"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
 LABEL subarr.subgen.patch_rev="${PATCH_REV}"
+LABEL subarr.subgen.release_tag="${RELEASE_TAG}"
 LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
 
 # Apt packages — own layer so pip changes don't re-run apt.
@@ -79,6 +87,21 @@ ENV XDG_CACHE_HOME=/cache \
 # micro-cues. Overridable at runtime — set CUSTOM_REGROUP="" to disable, or to
 # your own DSL. (subgen reads CUSTOM_REGROUP from the environment.)
 ENV CUSTOM_REGROUP="cm_sp=.* /。/?/？_sg=.5_mg=.3++84_p=.3+.7+1.5_sl=42++++++1"
+
+# [r9] Bake the Phase-1 kwargs research as the image default. These are the
+# hardware-INDEPENDENT anti-failure settings (hallucination/looping fixes,
+# each issue-cited in coaxk/subarr-subgen docs): temperature ladder re-enables
+# Whisper's fallback, log_prob -0.8 tightens the hallucination gate,
+# length_penalty 1.0 stops hallucinated bursts being cheaper than full
+# transcriptions (faster-whisper #569), VAD timing fixes over-merging
+# (faster-whisper #477). Overridable: any SUBGEN_KWARGS you set wins.
+# Contested knobs (condition_on_previous_text=false, VAD timing) are called
+# out in the r9 release notes.
+ENV SUBGEN_KWARGS='{"no_speech_threshold": 0.6, "vad_filter": true, "vad_parameters": {"threshold": 0.5, "min_speech_duration_ms": 250, "min_silence_duration_ms": 500, "speech_pad_ms": 600}, "condition_on_previous_text": false, "beam_size": 5, "patience": 1.0, "length_penalty": 1.0, "repetition_penalty": 1.05, "no_repeat_ngram_size": 3, "compression_ratio_threshold": 2.4, "log_prob_threshold": -0.8, "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]}'
+
+# [r9] The one per-language override that survived the 17-override prune
+# (JA subtitle convention plausibly matches the longer length_penalty).
+ENV SUBGEN_KWARGS_LANG_JA='{"patience": 1.0, "length_penalty": 1.3}'
 
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

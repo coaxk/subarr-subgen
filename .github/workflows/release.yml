@@ -118,6 +118,7 @@ jobs:
           build-args: |
             UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
             PATCH_REV=${{ steps.version.outputs.rev }}
+            RELEASE_TAG=${{ steps.version.outputs.tag }}
           tags: |
             ${{ steps.version.outputs.image_full }}
             ${{ steps.version.outputs.image_upstream }}

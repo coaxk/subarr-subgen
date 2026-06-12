@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Sat, 13 Jun 2026 12:00:00 +1000
+Subject: [PATCH] 0021: entrypoint device-guard
+
+Upstream defaults TRANSCRIBE_DEVICE=cpu, so a user who passes a GPU to
+the container but never configures subgen silently transcribes on CPU.
+Insert a device guard at the top of entrypoint.sh (before the
+podman/non-root early-exec path so the exported vars apply on both exec
+paths): if TRANSCRIBE_DEVICE is unset and nvidia-smi sees a GPU, export
+TRANSCRIBE_DEVICE=cuda and, if COMPUTE_TYPE is also unset, a float16
+safe floor (subarr guided setup refines from compute_cap). Anything the
+user sets always wins; WHISPER_MODEL is never touched -- model choice
+is a guided user decision, not a container default.
+
+---
+ entrypoint.sh | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/entrypoint.sh b/entrypoint.sh
+index 2a66a31..5844194 100755
+--- a/entrypoint.sh
++++ b/entrypoint.sh
+@@ -1,5 +1,27 @@
+ #!/bin/bash
+ 
++# ----------------------------------------------------------------
++# [r9] DEVICE GUARD — use the GPU if it's there.
++# Upstream defaults TRANSCRIBE_DEVICE=cpu, so a user who passes a GPU
++# to the container but never configures subgen silently transcribes on
++# CPU. Fill ONLY unset vars: anything the user (or subarr's guided
++# setup) sets always wins. Never touches WHISPER_MODEL — model choice
++# is a guided user decision, not a container default.
++# ----------------------------------------------------------------
++if [ -z "${TRANSCRIBE_DEVICE:-}" ]; then
++    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
++        export TRANSCRIBE_DEVICE="cuda"
++        if [ -z "${COMPUTE_TYPE:-}" ]; then
++            # Safe floor; subarr's guided setup refines from compute_cap
++            # (pre-Volta cards get int8 there).
++            export COMPUTE_TYPE="float16"
++        fi
++        echo "[device-guard] GPU visible and TRANSCRIBE_DEVICE unset -> cuda (COMPUTE_TYPE=${COMPUTE_TYPE})"
++    else
++        echo "[device-guard] no GPU visible; leaving TRANSCRIBE_DEVICE at upstream default (cpu)"
++    fi
++fi
++
+ # ----------------------------------------------------------------
+ # SAFETY CHECK: PODMAN / ALREADY NON-ROOT
+ # ----------------------------------------------------------------

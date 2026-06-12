@@ -25,3 +25,5 @@
 0018-asr-detected-language.patch
 0019-ignore-forced-subtitles.patch
 0020-subgen-kwargs-json-parse.patch
+0021-entrypoint-device-guard.patch
+0022-runtime-config-endpoint.patch

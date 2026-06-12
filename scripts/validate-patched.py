@@ -96,6 +96,9 @@ def main() -> int:
          "patch 0006 (JSONResponse import)"),
         ("[v4.1 PATCH] Structured dispatch counts", "patch 0003 (structured counts)"),
         ("return JSONResponse(content=result", "patch 0004 (/batch JSONResponse)"),
+        ('@app.post("/config")', "patch 0022 (/config endpoint)"),
+        ('"runtime_config": True', "patch 0022 (runtime_config capability)"),
+        ("subarr_subgen_release_tag", "patch 0022 (release tag emission)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
