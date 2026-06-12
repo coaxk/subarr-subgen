@@ -30,6 +30,7 @@ echo "==> docker build (upstream=$UPSTREAM_VERSION patch_rev=$PATCH_REV)"
 docker build \
   --build-arg "UPSTREAM_VERSION=$UPSTREAM_VERSION" \
   --build-arg "PATCH_REV=$PATCH_REV" \
+  --build-arg "RELEASE_TAG=dev-${PATCH_REV}" \
   -f docker/Dockerfile \
   -t "$IMAGE_TAG" \
   -t "subarr-subgen:dev" \

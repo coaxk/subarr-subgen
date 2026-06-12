@@ -29,6 +29,13 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 ARG UPSTREAM_VERSION=unknown
 ARG PATCH_REV=unknown
+# [r9 / subarr#224] The GHCR release tag this image was built from
+# (e.g. v2026.05.3-r9). Emitted in the /queue caps body as
+# subarr_subgen_release_tag so subarr's update check compares
+# like-for-like instead of patch-rev vs date-tag (which made every
+# install show a permanent fake "update available").
+ARG RELEASE_TAG=dev
+ENV SUBARR_SUBGEN_RELEASE_TAG="${RELEASE_TAG}"
 
 LABEL org.opencontainers.image.title="subarr-subgen"
 LABEL org.opencontainers.image.description="McCloudS/subgen + subarr-required patches"
@@ -36,6 +43,7 @@ LABEL org.opencontainers.image.source="https://github.com/coaxk/subarr-subgen"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
 LABEL subarr.subgen.patch_rev="${PATCH_REV}"
+LABEL subarr.subgen.release_tag="${RELEASE_TAG}"
 LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
 
 # Apt packages — own layer so pip changes don't re-run apt.
