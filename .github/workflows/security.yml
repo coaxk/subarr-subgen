@@ -7,6 +7,7 @@
 #   - pip-audit doesn't apply (we don't ship a Python package).
 #   - trivy scans the BUILT image (upstream subgen + our patches) for
 #     vulnerabilities introduced by upstream's base or our additions.
+#   - codeql.yml adds semantic scanning of scripts/ (parity with subarr).
 
 name: security
 
