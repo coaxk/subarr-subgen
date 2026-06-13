@@ -5,13 +5,18 @@ name: codeql
 # (bandit · semgrep · trivy).
 #
 # SCOPE — same principle as bandit here: analyse only OUR code, never the
-# vendored upstream subgen.py. Two mechanisms enforce that:
-#   1. checkout does NOT init the upstream/ submodule, so the vendored tree
-#      isn't on disk at scan time (same as rebase-test.yml's clean checkout).
-#   2. the CodeQL config pins analysis to scripts/ (our extraction + patch-
-#      validation helpers — the Python that actually runs on user machines).
-# Python only: there is no JS/TS in this repo (no frontend).
+# vendored upstream subgen.py. The no-submodule checkout is what enforces it:
+# the vendored tree isn't on disk at scan time (same as rebase-test.yml), so
+# the Python extractor only ever sees scripts/ (our extraction + patch-
+# validation helpers — all of this repo's own Python lives there).
 #
+# codeql-action v4 also runs the `actions` extractor, which scans the
+# workflow files themselves for security issues (complements zizmor) — that's
+# a free bonus, so we don't filter it out. (A `paths:` filter scoped to
+# scripts/ would starve the actions extractor of in-scope files and fail the
+# run with "no source code seen".)
+#
+# Python only otherwise: there is no JS/TS in this repo (no frontend).
 # Free on public repos (this repo went public 2026-06-13).
 
 on:
@@ -51,9 +56,6 @@ jobs:
         with:
           language: ${{ matrix.language }}
           queries: security-extended
-          config: |
-            paths:
-              - scripts
       - name: Autobuild
         uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
       - name: Analyze
