@@ -1,0 +1,64 @@
+name: codeql
+
+# GitHub-native semantic code scanning, for parity with coaxk/subarr's codeql
+# workflow. Complements the pattern/CVE scanners in security.yml
+# (bandit · semgrep · trivy).
+#
+# SCOPE — same principle as bandit here: analyse only OUR code, never the
+# vendored upstream subgen.py. The no-submodule checkout is what enforces it:
+# the vendored tree isn't on disk at scan time (same as rebase-test.yml), so
+# the Python extractor only ever sees scripts/ (our extraction + patch-
+# validation helpers — all of this repo's own Python lives there).
+#
+# codeql-action v4 also runs the `actions` extractor, which scans the
+# workflow files themselves for security issues (complements zizmor) — that's
+# a free bonus, so we don't filter it out. (A `paths:` filter scoped to
+# scripts/ would starve the actions extractor of in-scope files and fail the
+# run with "no source code seen".)
+#
+# Python only otherwise: there is no JS/TS in this repo (no frontend).
+# Free on public repos (this repo went public 2026-06-13).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Wednesdays 06:00 UTC — staggered away from rebase-test (Mon 06:00) and
+    # security (Tue 07:00) so a bad morning doesn't cascade across workflows.
+    - cron: "0 6 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      # No submodules: keep the vendored upstream/subgen.py off disk so CodeQL
+      # only ever sees our own scripts/.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        with:
+          language: ${{ matrix.language }}
+          queries: security-extended
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+      - name: Analyze
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        with:
+          category: "/language:${{ matrix.language }}"
