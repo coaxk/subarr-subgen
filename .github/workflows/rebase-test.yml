@@ -28,6 +28,11 @@
 # bill preview (how many patches break) to the run summary. Non-gating —
 # early-warning only, so we watch the cost trend before the merge forces it.
 #
+# All issue reports are STICKY (scripts/sticky-issue.sh): each report path
+# has a unique key label (upstream-bump / patch-drift / stable-ts-removal)
+# and updates the one open issue in place rather than opening a duplicate
+# every run. Close the issue once acted on; the next occurrence opens fresh.
+#
 # Runs Mondays 06:00 UTC. Also runnable manually.
 
 name: rebase-test
@@ -46,6 +51,9 @@ jobs:
       # (a permissions block is exhaustive — unlisted scopes are denied). This
       # is why the detector silently failed every run since inception.
       issues: write # open the drift / bump issue
+    env:
+      GH_TOKEN: ${{ github.token }} # gh CLI auth for the sticky-issue reporter
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: checkout (no submodules — we fetch upstream fresh)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -97,27 +105,36 @@ jobs:
 
       - name: report — clean drift (new upstream, patches still apply)
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD != env.PINNED_SHA
-        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
-        with:
-          title: "Upstream bump available: ${{ env.UPSTREAM_HEAD_SHORT }}"
-          content-filepath: .github/issue-templates/clean-bump.md
-          labels: upstream-bump,low-priority
+        run: |
+          bash scripts/sticky-issue.sh \
+            "${{ github.repository }}" \
+            upstream-bump \
+            "Upstream bump available: ${UPSTREAM_HEAD_SHORT}" \
+            .github/issue-templates/clean-bump.md \
+            "upstream-bump,low-priority" \
+            "Upstream still ahead of our pin as of $(date -u +%Y-%m-%dT%H:%MZ) — HEAD=${UPSTREAM_HEAD_SHORT}, patches still apply clean. ${RUN_URL}"
 
       - name: report — patches broke
         if: steps.apply.outcome == 'failure' || steps.validate.outcome == 'failure'
-        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
-        with:
-          title: "Upstream drift broke patches (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
-          content-filepath: .github/issue-templates/drift-detected.md
-          labels: upstream-drift,blocking
+        run: |
+          bash scripts/sticky-issue.sh \
+            "${{ github.repository }}" \
+            patch-drift \
+            "Upstream drift broke patches (HEAD=${UPSTREAM_HEAD_SHORT})" \
+            .github/issue-templates/drift-detected.md \
+            "upstream-drift,blocking,patch-drift" \
+            "Still drifting as of $(date -u +%Y-%m-%dT%H:%MZ) — upstream HEAD=${UPSTREAM_HEAD_SHORT}. ${RUN_URL}"
 
       - name: report — stable-ts REMOVED from main (subarr#171 trigger fired)
         if: env.STABLE_TS_PRESENT == 'no'
-        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
-        with:
-          title: "⚠️ subarr#171 TRIGGER: stable-ts removed from upstream main (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
-          content-filepath: .github/issue-templates/stable-ts-removed.md
-          labels: upstream-drift,blocking,stable-ts-removal
+        run: |
+          bash scripts/sticky-issue.sh \
+            "${{ github.repository }}" \
+            stable-ts-removal \
+            "⚠️ subarr#171 TRIGGER: stable-ts removed from upstream main (HEAD=${UPSTREAM_HEAD_SHORT})" \
+            .github/issue-templates/stable-ts-removed.md \
+            "upstream-drift,blocking,stable-ts-removal" \
+            "stable-ts STILL absent from upstream main as of $(date -u +%Y-%m-%dT%H:%MZ) — HEAD=${UPSTREAM_HEAD_SHORT}. Migration still pending. ${RUN_URL}"
 
       - name: report — no drift
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD == env.PINNED_SHA
