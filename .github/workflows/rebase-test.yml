@@ -17,6 +17,17 @@
 #      → patches landed but the structural contract broke. Probably an
 #        upstream rename / function-signature change. Opens a drift issue.
 #
+#   4. stable-ts gone from main (no `stable_whisper` import + no `stable-ts`
+#      requirement) → the drop-stable-ts refactor has MERGED. Opens a loud,
+#      distinctly-labelled blocking issue — the subarr#171 trigger. This is
+#      separate from routine drift (3): it means CUSTOM_REGROUP is dead on the
+#      new base, not just that a patch needs re-porting.
+#
+# A second job (drop-stable-ts-preview) test-applies the stack against the
+# UNMERGED refactor/drop-stable-ts branch every run and writes a migration-
+# bill preview (how many patches break) to the run summary. Non-gating —
+# early-warning only, so we watch the cost trend before the merge forces it.
+#
 # Runs Mondays 06:00 UTC. Also runnable manually.
 
 name: rebase-test
@@ -52,6 +63,25 @@ jobs:
       - name: read pinned SHA
         run: echo "PINNED_SHA=$(cat scripts/upstream.pin)" >> $GITHUB_ENV
 
+      - name: check stable-ts still present on main (subarr#171 trigger)
+        id: stablets
+        run: |
+          # The drop-stable-ts refactor removes BOTH the `stable_whisper`
+          # import (code) and the `stable-ts` dependency (requirements). When
+          # both are gone from main, the refactor has merged — the subarr#171
+          # trigger has fired. Two-factor so a fluke in one file can't alarm.
+          # This is the loud, unambiguous merge signal, separate from the
+          # routine patch-drift report below.
+          import_hits=$(grep -rl 'stable_whisper' upstream --include='*.py' 2> /dev/null | wc -l)
+          req_hits=$(grep -rlE 'stable[-_]ts' upstream/requirements*.txt 2> /dev/null | wc -l)
+          echo "stable_whisper import files: $import_hits | stable-ts requirement files: $req_hits"
+          if [ "$import_hits" -eq 0 ] && [ "$req_hits" -eq 0 ]; then
+            echo "stable-ts is GONE from upstream main — subarr#171 trigger fired"
+            echo "STABLE_TS_PRESENT=no" >> $GITHUB_ENV
+          else
+            echo "STABLE_TS_PRESENT=yes" >> $GITHUB_ENV
+          fi
+
       - name: try apply patches
         id: apply
         continue-on-error: true
@@ -81,6 +111,93 @@ jobs:
           content-filepath: .github/issue-templates/drift-detected.md
           labels: upstream-drift,blocking
 
+      - name: report — stable-ts REMOVED from main (subarr#171 trigger fired)
+        if: env.STABLE_TS_PRESENT == 'no'
+        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
+        with:
+          title: "⚠️ subarr#171 TRIGGER: stable-ts removed from upstream main (HEAD=${{ env.UPSTREAM_HEAD_SHORT }})"
+          content-filepath: .github/issue-templates/stable-ts-removed.md
+          labels: upstream-drift,blocking,stable-ts-removal
+
       - name: report — no drift
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD == env.PINNED_SHA
         run: echo "no drift — upstream HEAD == our pin."
+
+  # Informational early-warning: test-apply the patch stack against the
+  # UNMERGED refactor/drop-stable-ts branch to preview the migration bill
+  # before it lands. Breaks here are EXPECTED (the branch rewrites the core
+  # our patches hook into) so this job never gates — it always exits 0 and
+  # writes the count + trend to the run summary. The loud merge alarm lives
+  # in the rebase-test job above (stable-ts gone from main).
+  drop-stable-ts-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: checkout (no submodules — we fetch the branch fresh)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: clone upstream drop-stable-ts branch (if it still exists)
+        id: clone
+        continue-on-error: true
+        run: |
+          rm -rf upstream/
+          if git clone --depth 1 -b refactor/drop-stable-ts \
+               https://github.com/McCloudS/subgen.git upstream; then
+            echo "branch_present=yes" >> $GITHUB_OUTPUT
+            echo "BRANCH_HEAD_SHORT=$(git -C upstream rev-parse --short HEAD)" >> $GITHUB_ENV
+          else
+            echo "branch_present=no" >> $GITHUB_OUTPUT
+          fi
+
+      - name: branch gone — possible merge or delete
+        if: steps.clone.outputs.branch_present == 'no'
+        run: |
+          {
+            echo "## drop-stable-ts preview"
+            echo
+            echo "The \`refactor/drop-stable-ts\` branch could not be cloned."
+            echo "It may have been **merged and deleted**, or renamed. Cross-"
+            echo "check the rebase-test job's stable-ts-on-main alarm and subarr#171."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: preview migration bill (per-patch apply --check)
+        if: steps.clone.outputs.branch_present == 'yes'
+        run: |
+          # Tally how many series patches still apply cleanly to the branch
+          # tree. This is the live cost preview for the eventual #171 crossing.
+          total=0; ok=0; broke=0; broke_list=""
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in \#*) continue ;; esac
+            patch="$(echo "$line" | tr -d '[:space:]')"
+            [ -z "$patch" ] && continue
+            pf="$GITHUB_WORKSPACE/patches/$patch"
+            [ -f "$pf" ] || continue
+            total=$((total + 1))
+            if git -C upstream apply --check "$pf" 2> /dev/null; then
+              ok=$((ok + 1))
+            else
+              broke=$((broke + 1))
+              broke_list="$broke_list\`$patch\` "
+            fi
+          done < patches/series
+          {
+            echo "## drop-stable-ts migration-bill preview"
+            echo
+            echo "Branch HEAD: \`${BRANCH_HEAD_SHORT}\`"
+            echo
+            echo "| patches | clean | break |"
+            echo "| ------- | ----- | ----- |"
+            echo "| $total | $ok | $broke |"
+            echo
+            if [ "$broke" -gt 0 ]; then
+              echo "**Breaking patches:** $broke_list"
+            else
+              echo "All patches still apply — the branch has not yet diverged in ways that hit us."
+            fi
+            echo
+            echo "_Breaks here are expected and non-blocking — this is the cost preview"
+            echo "for the eventual subarr#171 migration, not a failure._"
+          } >> "$GITHUB_STEP_SUMMARY"
