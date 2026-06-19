@@ -99,6 +99,7 @@ def main() -> int:
         ('@app.post("/config")', "patch 0022 (/config endpoint)"),
         ('"runtime_config": True', "patch 0022 (runtime_config capability)"),
         ("subarr_subgen_release_tag", "patch 0022 (release tag emission)"),
+        ('"concurrent_transcriptions": concurrent_transcriptions', "patch 0023 (concurrent_transcriptions capability)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
