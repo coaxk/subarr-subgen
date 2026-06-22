@@ -82,6 +82,21 @@ def main() -> int:
         fail(f"batch() missing 'reverse' arg (got {ba_args})")
     ok(f"batch{tuple(ba_args)} has reverse")
 
+    # Gate: patch 0024 (per-request ignore_forced threading)
+    if "ignore_forced" not in (ba_args or []):
+        fail(f"batch() missing 'ignore_forced' arg (got {ba_args}) — patch 0024 not landed")
+    ok("batch() has ignore_forced (patch 0024)")
+
+    ssf_args = fn_args(tree, "should_skip_file")
+    if not ssf_args or "ignore_forced_override" not in ssf_args:
+        fail(f"should_skip_file missing 'ignore_forced_override' (got {ssf_args}) — patch 0024")
+    ok("should_skip_file has ignore_forced_override (patch 0024)")
+
+    hisl_args = fn_args(tree, "has_internal_subtitle_in_language")
+    if not hisl_args or "ignore_forced_override" not in hisl_args:
+        fail(f"has_internal_subtitle_in_language missing 'ignore_forced_override' (got {hisl_args}) — patch 0024")
+    ok("has_internal_subtitle_in_language has ignore_forced_override (patch 0024)")
+
     if not fn_returns_string_constant(tree, "gen_subtitles_queue"):
         fail("gen_subtitles_queue has no string-constant return — patch 0005 not landed")
     ok("gen_subtitles_queue returns dispatch strings")
@@ -100,6 +115,8 @@ def main() -> int:
         ('"runtime_config": True', "patch 0022 (runtime_config capability)"),
         ("subarr_subgen_release_tag", "patch 0022 (release tag emission)"),
         ('"concurrent_transcriptions": concurrent_transcriptions', "patch 0023 (concurrent_transcriptions capability)"),
+        ('"request_ignore_forced": True', "patch 0024 (request_ignore_forced capability)"),
+        ("_eff_ignore_forced", "patch 0024 (per-request forced override logic)"),
     ]
     for needle, label in text_checks:
         if needle not in code:

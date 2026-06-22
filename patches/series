@@ -28,3 +28,4 @@
 0021-entrypoint-device-guard.patch
 0022-runtime-config-endpoint.patch
 0023-expose-concurrent-transcriptions.patch
+0024-per-request-ignore-forced.patch
