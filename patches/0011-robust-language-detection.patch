@@ -1,4 +1,4 @@
-From 46b21ad7e98b8eccbb18ee418c5c4f824a6c70bf Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
 Date: Mon, 1 Jun 2026 00:59:15 +1000
 Subject: [PATCH] v4.5: robust multi-chunk language detection
@@ -8,10 +8,10 @@ Subject: [PATCH] v4.5: robust multi-chunk language detection
  1 file changed, 133 insertions(+), 1 deletion(-)
 
 diff --git a/subgen.py b/subgen.py
-index 6bcbdce..0e70b4d 100644
+index be6bd39..7ed7dd3 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+@@ -2,7 +2,7 @@ subgen_version = '2026.06.4'
  # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
  # can detect our extended capabilities (audio_language_override, etc.) and
  # degrade gracefully against vanilla mccloud/subgen which lacks them.
@@ -20,7 +20,7 @@ index 6bcbdce..0e70b4d 100644
  
  """
  ENVIRONMENT VARIABLES DOCUMENTATION
-@@ -622,6 +622,12 @@ def queue_status():
+@@ -624,6 +624,12 @@ def queue_status():
              # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
              # knows whether to render the cancel button enabled or gated.
              "queue_cancel": True,
@@ -33,7 +33,7 @@ index 6bcbdce..0e70b4d 100644
          },
      }
  
-@@ -1367,6 +1373,132 @@ def detect_language_task(path, original_task_data=None):
+@@ -1543,6 +1549,132 @@ def detect_language_task(path, original_task_data=None):
                  
      return task_data
  
@@ -166,6 +166,3 @@ index 6bcbdce..0e70b4d 100644
  def extract_audio_segment_to_memory(input_file, start_time, duration):
      """
      Extract a segment of audio from input_file, starting at start_time for duration seconds.
--- 
-2.54.0.windows.1
-

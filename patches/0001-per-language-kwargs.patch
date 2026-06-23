@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
 Date: Thu, 28 May 2026 22:54:56 +1000
-Subject: [PATCH 1/7] 0001: per-language kwargs (SUBGEN_KWARGS_LANG_<CODE>)
+Subject: [PATCH] 0001: per-language kwargs (SUBGEN_KWARGS_LANG_<CODE>)
 
 Reads SUBGEN_KWARGS_LANG_<CODE> env vars at startup, merges the matching override into transcribe args when language is detected/forced at each transcribe site (3 sites).
 ---
@@ -9,10 +9,10 @@ Reads SUBGEN_KWARGS_LANG_<CODE> env vars at startup, merges the matching overrid
  1 file changed, 43 insertions(+)
 
 diff --git a/subgen.py b/subgen.py
-index 25fd4c3..225bcc7 100644
+index b9c8562..53e5d7d 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -187,6 +187,19 @@ try:
+@@ -189,6 +189,19 @@ try:
  except ValueError:
      kwargs = {}
      logging.info("kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'")
@@ -32,7 +32,7 @@ index 25fd4c3..225bcc7 100644
      
  if transcribe_device == "gpu":
      transcribe_device = "cuda"
-@@ -929,6 +942,16 @@ def asr_task_worker(task_data: dict) -> None:
+@@ -1077,6 +1090,16 @@ def asr_task_worker(task_data: dict) -> None:
              args['regroup'] = custom_regroup
  
          args.update(kwargs)
@@ -49,7 +49,7 @@ index 25fd4c3..225bcc7 100644
          
          # Detect audio start_time offset from source file (if accessible)
          audio_offset = get_audio_start_time(video_file) if video_file else 0.0
-@@ -1103,6 +1126,16 @@ def detect_language_from_upload(task_data: dict) -> None:
+@@ -1279,6 +1302,16 @@ def detect_language_from_upload(task_data: dict) -> None:
              args['input_sr'] = 16000
  
          args.update(kwargs)
@@ -66,7 +66,7 @@ index 25fd4c3..225bcc7 100644
          args['verbose'] = False # Hide the confusing progress bar
          
          result = model.transcribe(**args)
-@@ -1419,6 +1452,16 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
+@@ -1595,6 +1628,16 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
              args['regroup'] = custom_regroup
              
          args.update(kwargs)

@@ -12,7 +12,6 @@ TRANSCRIBE_DEVICE=cuda and, if COMPUTE_TYPE is also unset, a float16
 safe floor (subarr guided setup refines from compute_cap). Anything the
 user sets always wins; WHISPER_MODEL is never touched -- model choice
 is a guided user decision, not a container default.
-
 ---
  entrypoint.sh | 22 ++++++++++++++++++++++
  1 file changed, 22 insertions(+)

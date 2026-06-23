@@ -1,4 +1,4 @@
-From 16bf278a1966e817b807fd458dedec4fd36a3e5c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coaxk <juddhowie@gmail.com>
 Date: Sun, 31 May 2026 16:50:59 +1000
 Subject: [PATCH] 0009: audio_language_override capability + capability flag
@@ -8,11 +8,11 @@ Subject: [PATCH] 0009: audio_language_override capability + capability flag
  1 file changed, 47 insertions(+), 6 deletions(-)
 
 diff --git a/subgen.py b/subgen.py
-index f226539..c0727d0 100644
+index 1f407da..7c3cf02 100644
 --- a/subgen.py
 +++ b/subgen.py
 @@ -1,4 +1,8 @@
- subgen_version = '2026.05.3'
+ subgen_version = '2026.06.4'
 +# [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
 +# can detect our extended capabilities (audio_language_override, etc.) and
 +# degrade gracefully against vanilla mccloud/subgen which lacks them.
@@ -20,7 +20,7 @@ index f226539..c0727d0 100644
  
  """
  ENVIRONMENT VARIABLES DOCUMENTATION
-@@ -577,6 +581,13 @@ def queue_status():
+@@ -579,6 +583,13 @@ def queue_status():
          "processing_count": len(processing),
          "idle": task_queue.is_idle(),
          "version": subgen_version,
@@ -34,7 +34,7 @@ index f226539..c0727d0 100644
      }
  
  
-@@ -735,10 +746,23 @@ def receive_emby_webhook(
+@@ -737,10 +748,23 @@ def receive_emby_webhook(
  def batch(
          directory: str = Query(...),
          forceLanguage: Union[str, None] = Query(default=None),
@@ -60,7 +60,7 @@ index f226539..c0727d0 100644
      status = 404 if (not isinstance(result, dict) or result.get("walked", 0) == 0) else 200
      return JSONResponse(content=result, status_code=status)
  
-@@ -1776,7 +1800,8 @@ def find_default_audio_track_language(audio_tracks):
+@@ -1952,7 +1976,8 @@ def find_default_audio_track_language(audio_tracks):
              return track['language']
      return None
      
@@ -70,7 +70,7 @@ index f226539..c0727d0 100644
      global task_queue
  
      # Check if this file is already in the queue or being processed
-@@ -1792,6 +1817,16 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+@@ -1968,6 +1993,16 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
      audio_tracks = get_audio_tracks(file_path)
      audio_langs = [track['language'] for track in audio_tracks]
  
@@ -87,7 +87,7 @@ index f226539..c0727d0 100644
      force_language = choose_transcribe_language(file_path, force_language, audio_tracks=audio_tracks)
  
      if should_skip_file(file_path, force_language, audio_langs=audio_langs):
-@@ -2368,10 +2403,14 @@ class NewFileHandler(FileSystemEventHandler):
+@@ -2563,10 +2598,14 @@ class NewFileHandler(FileSystemEventHandler):
          self.handle_event(event)
  
  
@@ -103,7 +103,7 @@ index f226539..c0727d0 100644
      logging.debug("The folders are:")
  
      # [v4.1 PATCH] Structured dispatch counts for /batch return.
-@@ -2409,7 +2448,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+@@ -2604,7 +2643,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
  
      for file_path in file_list:
          counts["walked"] += 1
@@ -113,7 +113,7 @@ index f226539..c0727d0 100644
  
      # if the path specified was actually a single file and not a folder, process it
      # NOTE: preserves upstream/live behaviour (uses last loop 'path'); latent
-@@ -2418,7 +2458,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+@@ -2613,7 +2653,8 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
      if os.path.isfile(path):
          if has_audio(path):
              counts["walked"] += 1
@@ -123,6 +123,3 @@ index f226539..c0727d0 100644
  
      # Set up the observer to watch for new files
      if monitor:
--- 
-2.54.0.windows.1
-

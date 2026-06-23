@@ -1,4 +1,4 @@
-From 44a9743e11211cd7a7b37218de7f437aa9be9df9 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coaxk <juddhowie@gmail.com>
 Date: Mon, 1 Jun 2026 00:42:38 +1000
 Subject: [PATCH] 0010: v4.4 queue cancel + capability flag
@@ -8,10 +8,10 @@ Subject: [PATCH] 0010: v4.4 queue cancel + capability flag
  1 file changed, 75 insertions(+), 8 deletions(-)
 
 diff --git a/subgen.py b/subgen.py
-index c0727d0..6bcbdce 100644
+index 7c3cf02..be6bd39 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+@@ -2,7 +2,7 @@ subgen_version = '2026.06.4'
  # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
  # can detect our extended capabilities (audio_language_override, etc.) and
  # degrade gracefully against vanilla mccloud/subgen which lacks them.
@@ -20,7 +20,7 @@ index c0727d0..6bcbdce 100644
  
  """
  ENVIRONMENT VARIABLES DOCUMENTATION
-@@ -331,13 +331,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
+@@ -333,13 +333,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
              return False
  
      def get(self, block=True, timeout=None):
@@ -53,7 +53,7 @@ index c0727d0..6bcbdce 100644
  
      def mark_done(self, item):
          with self._lock:
-@@ -361,6 +373,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
+@@ -363,6 +375,25 @@ class DeduplicatedQueue(queue.PriorityQueue):
          with self._lock:
              return [{"path": p, "type": t} for p, t in self._processing.items()]
  
@@ -79,7 +79,7 @@ index c0727d0..6bcbdce 100644
  # Start queue
  task_queue = DeduplicatedQueue()
  
-@@ -587,10 +618,46 @@ def queue_status():
+@@ -589,10 +620,46 @@ def queue_status():
          "subarr_subgen_patch_rev": subarr_subgen_patch_rev,
          "capabilities": {
              "audio_language_override": True,
@@ -126,6 +126,3 @@ index c0727d0..6bcbdce 100644
  @app.post("/tautulli")
  def receive_tautulli_webhook(
          source: Union[str, None] = Header(None),
--- 
-2.54.0.windows.1
-

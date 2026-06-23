@@ -1,4 +1,4 @@
-From 50769513e419fb047b96a449b5b7ad06882584f3 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
 Date: Mon, 1 Jun 2026 01:27:46 +1000
 Subject: [PATCH] v4.6: curated per-lang prompts
@@ -8,10 +8,10 @@ Subject: [PATCH] v4.6: curated per-lang prompts
  1 file changed, 48 insertions(+), 1 deletion(-)
 
 diff --git a/subgen.py b/subgen.py
-index 0e70b4d..33a8342 100644
+index 7ed7dd3..3ff8551 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+@@ -2,7 +2,7 @@ subgen_version = '2026.06.4'
  # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
  # can detect our extended capabilities (audio_language_override, etc.) and
  # degrade gracefully against vanilla mccloud/subgen which lacks them.
@@ -20,7 +20,7 @@ index 0e70b4d..33a8342 100644
  
  """
  ENVIRONMENT VARIABLES DOCUMENTATION
-@@ -204,6 +204,48 @@ for _env_k, _env_v in os.environ.items():
+@@ -206,6 +206,48 @@ for _env_k, _env_v in os.environ.items():
          except Exception as _e:
              logging.error(f"Failed to parse SUBGEN_KWARGS_LANG_{_lc.upper()}: {_e}")
  
@@ -69,7 +69,7 @@ index 0e70b4d..33a8342 100644
      
  if transcribe_device == "gpu":
      transcribe_device = "cuda"
-@@ -628,6 +670,11 @@ def queue_status():
+@@ -630,6 +672,11 @@ def queue_status():
              # ground-truth funnel produce calibrated confidence, not the
              # single-chunk fragile guess that vanilla detect_language gives.
              "robust_language_detection": True,
@@ -81,6 +81,3 @@ index 0e70b4d..33a8342 100644
          },
      }
  
--- 
-2.54.0.windows.1
-

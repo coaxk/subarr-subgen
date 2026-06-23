@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
-Date: Fri, 6 Jun 2026 09:05:00 +1000
+Date: Sat, 6 Jun 2026 09:05:00 +1000
 Subject: [PATCH] v4.12: /asr returns X-Detected-Language header (#131)
 
 The /asr endpoint surfaces the Whisper-detected source language to the
@@ -11,13 +11,15 @@ detected language is carried out of the worker on TaskResult.language
 The subarr tuning-lab arena captures it to label sweeps and later
 group/aggregate results per source language. Advertises
 capabilities.asr_detected_language. Additive + backward-compatible.
-
 ---
+ subgen.py | 25 ++++++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
 diff --git a/subgen.py b/subgen.py
-index 5096230..0e53d54 100644
+index 807fd32..80323b2 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -332,10 +332,12 @@ class TaskResult:
+@@ -334,10 +334,12 @@ class TaskResult:
      def __init__(self):
          self.result = None
          self.error = None
@@ -32,7 +34,7 @@ index 5096230..0e53d54 100644
          self.done.set()
      
      def set_error(self, error):
-@@ -733,6 +735,10 @@ def queue_status():
+@@ -735,6 +737,10 @@ def queue_status():
              # touching the daily-driver env. subarr gates the vanilla-base
              # toggle on this flag.
              "asr_vanilla_base": True,
@@ -43,7 +45,7 @@ index 5096230..0e53d54 100644
              # [v4.4 PATCH] subarr can now cancel a queued task by POSTing
              # to /queue/cancel?path=<canonical>. Surfaces so subarr's UI
              # knows whether to render the cancel button enabled or gated.
-@@ -1126,10 +1132,15 @@ async def asr(
+@@ -1128,10 +1134,15 @@ async def asr(
                  }
              else: 
                  logging.info(f"ASR task {task_id} completed")
@@ -60,7 +62,7 @@ index 5096230..0e53d54 100644
                  )
          else:
              logging.error(f"ASR task {task_id} timed out")
-@@ -1297,9 +1308,14 @@ def asr_task_worker(task_data: dict) -> None:
+@@ -1445,7 +1456,9 @@ def asr_task_worker(task_data: dict) -> None:
          
          appendLine(result)
          
@@ -69,11 +71,16 @@ index 5096230..0e53d54 100644
 +        # language, surfaced to the /asr caller via the X-Detected-Language
 +        # header so subarr's arena can label + group sweeps per language).
          if result_container:
--            result_container.set_result(result.to_srt_vtt(filepath=None, word_level=word_level_highlight))
-+            result_container.set_result(
-+                result.to_srt_vtt(filepath=None, word_level=word_level_highlight),
-+                language=getattr(result, "language", None),
-+            )
+             output_format = task_data.get('output_format', 'srt')
+             if output_format == 'json':
+@@ -1475,7 +1488,9 @@ def asr_task_worker(task_data: dict) -> None:
+                 })
+             else:  # srt (default)
+                 formatted = result.to_srt_vtt(filepath=None, word_level=word_level_highlight)
+-            result_container.set_result(formatted)
++            # [v4.12 PATCH #131] carry the Whisper-detected language out to the
++            # X-Detected-Language header alongside upstream's output_format formatting.
++            result_container.set_result(formatted, language=getattr(result, "language", None))
  
      except Exception as e:
          logging.error(f"Error processing ASR (ID: {task_id}): {e}", exc_info=True)

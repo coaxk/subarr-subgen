@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
 Date: Thu, 28 May 2026 22:54:56 +1000
-Subject: [PATCH 3/7] 0003: reverse-sort transcribe_existing (full-unit
- replace)
+Subject: [PATCH] 0003: reverse-sort transcribe_existing (full-unit replace)
 
 Replaces transcribe_existing() to (a) accept ?reverse=true so /batch can process newest files first, (b) collect-then-sort instead of walking in directory-iteration order, (c) tally outcomes per file into a structured counts dict for the /batch return shape. Subgenscan.ps1 Option 2 depends on this reverse param.
 ---
@@ -10,10 +9,10 @@ Replaces transcribe_existing() to (a) accept ?reverse=true so /batch can process
  1 file changed, 49 insertions(+), 7 deletions(-)
 
 diff --git a/subgen.py b/subgen.py
-index 30dc5e4..a6cd19b 100644
+index c14f01d..c8dba6c 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2342,20 +2342,58 @@ class NewFileHandler(FileSystemEventHandler):
+@@ -2537,20 +2537,58 @@ class NewFileHandler(FileSystemEventHandler):
          self.handle_event(event)
  
  
@@ -79,7 +78,7 @@ index 30dc5e4..a6cd19b 100644
      # Set up the observer to watch for new files
      if monitor:
          observer = Observer()
-@@ -2366,6 +2404,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+@@ -2561,6 +2599,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
          observer.start()
          logging.info("Finished searching and queueing files for transcription. Now watching for new files.")
  

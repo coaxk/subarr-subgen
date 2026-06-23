@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
 Date: Fri, 19 Jun 2026 09:00:00 +1000
-Subject: [PATCH] v4.15: expose concurrent_transcriptions in /queue capabilities
+Subject: [PATCH] v4.15: expose concurrent_transcriptions in /queue
+ capabilities
 
 subarr reads subgen's live CONCURRENT_TRANSCRIPTIONS as the GPU-concurrency
 budget so its Tuning-Lab arena -- which fires /asr as a "direct task" OUTSIDE
@@ -9,16 +10,15 @@ the worker pool -- gates on the same limit as the normal queue instead of
 overloading the GPU. Reported as the live value (not just "supported") so a
 subgen set to 1 serialises and one set to 1000 is left unthrottled. None on
 older subgen -> subarr's gate stays disabled (dormant-safe).
-
 ---
  subgen.py | 6 ++++++
  1 file changed, 6 insertions(+)
 
 diff --git a/subgen.py b/subgen.py
-index b9eb915..b8d129a 100644
+index 3038528..217e26e 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -805,6 +805,12 @@ def queue_status():
+@@ -798,6 +798,12 @@ def queue_status():
              # [v4.14 PATCH] POST /config can switch model/compute_type at
              # runtime with rollback — subarr's guided setup live-apply.
              "runtime_config": True,
