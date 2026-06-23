@@ -1,7 +1,10 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
-Date: Thu, 29 May 2026 09:00:00 +1000
-Subject: [PATCH 8/8] 0008: log language-detection probability
+Date: Fri, 29 May 2026 09:00:00 +1000
+Subject: [PATCH] 0008: log language-detection probability
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 Surfaces the language-detection confidence score in the "Detected
 language" log line. For translation-only setups (TRANSCRIBE_OR_TRANSLATE=
@@ -22,10 +25,10 @@ detect_language_task path at ~line 1255).
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/subgen.py b/subgen.py
-index dda2740..f226539 100644
+index 47ed559..1f407da 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -1167,7 +1167,7 @@ def detect_language_from_upload(task_data: dict) -> None:
+@@ -1343,7 +1343,7 @@ def detect_language_from_upload(task_data: dict) -> None:
          detected_language = LanguageCode.from_string(result.language)
          language_code = detected_language.to_iso_639_1()
          
@@ -34,7 +37,7 @@ index dda2740..f226539 100644
          
          # Set the result for the blocking endpoint
          if result_container:
-@@ -1252,7 +1252,7 @@ def detect_language_task(path, original_task_data=None):
+@@ -1428,7 +1428,7 @@ def detect_language_task(path, original_task_data=None):
          result = model.transcribe(audio_segment, verbose=False)
          detected_language = LanguageCode.from_string(result.language)
          

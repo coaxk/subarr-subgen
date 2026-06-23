@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
 Date: Thu, 28 May 2026 22:54:57 +1000
-Subject: [PATCH 6/7] 0006: widen fastapi.responses import to include
- JSONResponse
+Subject: [PATCH] 0006: widen fastapi.responses import to include JSONResponse
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -13,7 +12,7 @@ Required by patch 0004 (/batch returns JSONResponse). One-line import widening â
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/subgen.py b/subgen.py
-index 25ebc24..a82c8b1 100644
+index 8aa3424..c3a2d34 100644
 --- a/subgen.py
 +++ b/subgen.py
 @@ -70,7 +70,7 @@ import requests

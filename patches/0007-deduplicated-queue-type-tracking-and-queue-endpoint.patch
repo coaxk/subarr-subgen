@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
 Date: Thu, 28 May 2026 22:54:57 +1000
-Subject: [PATCH 7/7] 0007: DeduplicatedQueue type-tracking + GET /queue
- endpoint
+Subject: [PATCH] 0007: DeduplicatedQueue type-tracking + GET /queue endpoint
 
 DeduplicatedQueue's _queued / _processing become dict[path->type] instead of bare set[path], so get_queued_tasks / get_processing_tasks return list[{path, type}] dicts. Public method signatures (put/get/mark_done/is_active/is_idle) preserved.
 
@@ -12,10 +11,10 @@ Adds GET /queue endpoint returning {queued, processing, queued_count, processing
  1 file changed, 31 insertions(+), 10 deletions(-)
 
 diff --git a/subgen.py b/subgen.py
-index a82c8b1..dda2740 100644
+index c3a2d34..47ed559 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -299,11 +299,17 @@ def generate_audio_hash(audio_content: bytes, task: str = None, language: str =
+@@ -301,11 +301,17 @@ def generate_audio_hash(audio_content: bytes, task: str = None, language: str =
  # ============================================================================
  
  class DeduplicatedQueue(queue.PriorityQueue):
@@ -36,7 +35,7 @@ index a82c8b1..dda2740 100644
          self._lock = Lock()
  
      def put(self, item, block=True, timeout=None):
-@@ -313,10 +319,10 @@ class DeduplicatedQueue(queue.PriorityQueue):
+@@ -315,10 +321,10 @@ class DeduplicatedQueue(queue.PriorityQueue):
                  # Priority: 0 (Detect), 1 (ASR), 2 (Transcribe)
                  task_type = item.get("type", "transcribe")
                  priority = 0 if task_type == "detect_language" else (1 if task_type == "asr" else 2)
@@ -49,7 +48,7 @@ index a82c8b1..dda2740 100644
                  return True
              return False
  
-@@ -325,14 +331,14 @@ class DeduplicatedQueue(queue.PriorityQueue):
+@@ -327,14 +333,14 @@ class DeduplicatedQueue(queue.PriorityQueue):
          priority, timestamp, item = super().get(block, timeout)
          with self._lock:
              task_id = item["path"]
@@ -67,7 +66,7 @@ index a82c8b1..dda2740 100644
  
      def is_idle(self):
          with self._lock:
-@@ -345,11 +351,11 @@ class DeduplicatedQueue(queue.PriorityQueue):
+@@ -347,11 +353,11 @@ class DeduplicatedQueue(queue.PriorityQueue):
  
      def get_queued_tasks(self):
          with self._lock:
@@ -81,7 +80,7 @@ index a82c8b1..dda2740 100644
  
  # Start queue
  task_queue = DeduplicatedQueue()
-@@ -559,6 +565,21 @@ def webui():
+@@ -561,6 +567,21 @@ def webui():
  def status():
      return {"version": f"Subgen {subgen_version}, stable-ts {stable_whisper.__version__}, faster-whisper {faster_whisper.__version__} ({docker_status})"}
  

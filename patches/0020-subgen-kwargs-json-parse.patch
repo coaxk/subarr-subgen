@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
-Date: Fri, 6 Jun 2026 09:30:00 +1000
-Subject: [PATCH] SUBGEN_KWARGS JSON parse -- booleans were silently dropped (Tier-B)
+Date: Sat, 6 Jun 2026 09:30:00 +1000
+Subject: [PATCH] SUBGEN_KWARGS JSON parse -- booleans were silently dropped
+ (Tier-B)
 
 SUBGEN_KWARGS is written as JSON in compose (true/false/null), but the
 parser used ast.literal_eval only, which raises ValueError on JSON
@@ -12,13 +13,15 @@ import time. _parse_kwargs_env now tries JSON first, falls back to a
 Python literal for back-compat, and warns LOUDLY (logging.warning reaches
 the root lastResort handler) when neither parses. No capability/protocol
 change; patch_rev stays v4.13.
-
 ---
+ subgen.py | 30 +++++++++++++++++++++++++-----
+ 1 file changed, 25 insertions(+), 5 deletions(-)
+
 diff --git a/subgen.py b/subgen.py
-index 09db3e2..c72fcf9 100644
+index 80323b2..f55df1b 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -195,11 +195,31 @@ show_in_subname_subgen = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', Tru
+@@ -188,11 +188,31 @@ show_in_subname_subgen = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', Tru
  show_in_subname_model = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL', True))
  
  # Advanced Configuration

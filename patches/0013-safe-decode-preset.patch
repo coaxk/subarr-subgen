@@ -1,4 +1,4 @@
-From 944637143f43f189f570f8c345b3f02a32ad00b0 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
 Date: Mon, 1 Jun 2026 01:29:29 +1000
 Subject: [PATCH] v4.7: safe-decode preset
@@ -8,10 +8,10 @@ Subject: [PATCH] v4.7: safe-decode preset
  1 file changed, 46 insertions(+), 1 deletion(-)
 
 diff --git a/subgen.py b/subgen.py
-index 33a8342..5f34e89 100644
+index 3ff8551..e5249aa 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+@@ -2,7 +2,7 @@ subgen_version = '2026.06.4'
  # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
  # can detect our extended capabilities (audio_language_override, etc.) and
  # degrade gracefully against vanilla mccloud/subgen which lacks them.
@@ -20,7 +20,7 @@ index 33a8342..5f34e89 100644
  
  """
  ENVIRONMENT VARIABLES DOCUMENTATION
-@@ -246,6 +246,47 @@ if convert_to_bool(os.getenv('SUBARR_SUBGEN_DEFAULT_PROMPTS', True)):
+@@ -248,6 +248,47 @@ if convert_to_bool(os.getenv('SUBARR_SUBGEN_DEFAULT_PROMPTS', True)):
          f"(opt out: SUBARR_SUBGEN_DEFAULT_PROMPTS=false)"
      )
  
@@ -68,7 +68,7 @@ index 33a8342..5f34e89 100644
      
  if transcribe_device == "gpu":
      transcribe_device = "cuda"
-@@ -675,6 +716,10 @@ def queue_status():
+@@ -677,6 +718,10 @@ def queue_status():
              # opts out via SUBARR_SUBGEN_DEFAULT_PROMPTS=false. subarr
              # can surface "subtitle punctuation seeded" in the UI.
              "curated_language_prompts": True,
@@ -79,6 +79,3 @@ index 33a8342..5f34e89 100644
          },
      }
  
--- 
-2.54.0.windows.1
-

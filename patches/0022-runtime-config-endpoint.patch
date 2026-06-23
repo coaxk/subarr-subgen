@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: dev <dev@x>
 Date: Sat, 13 Jun 2026 09:00:00 +1000
-Subject: [PATCH] v4.14: runtime /config endpoint with rollback + release tag in caps (#224)
+Subject: [PATCH] v4.14: runtime /config endpoint with rollback + release tag
+ in caps (#224)
 
 POST /config switches whisper_model and/or compute_type at runtime so
 subarr's guided setup can live-apply a model choice without an env edit
@@ -20,17 +21,19 @@ Accepted race (matches the perform_model_cleanup precedent): a job
 submitted after the idle check but before the swap completes can hit a
 model mid-teardown; the lock covers only the read. Low severity at the
 endpoint's intended call-site (guided setup on an idle system).
-
 ---
+ subgen.py | 98 ++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 97 insertions(+), 1 deletion(-)
+
 diff --git a/subgen.py b/subgen.py
-index c72fcf9..1328544 100644
+index f55df1b..3038528 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2,7 +2,7 @@ subgen_version = '2026.05.3'
+@@ -2,7 +2,7 @@ subgen_version = '2026.06.4'
  # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
  # can detect our extended capabilities (audio_language_override, etc.) and
  # degrade gracefully against vanilla mccloud/subgen which lacks them.
--subarr_subgen_patch_rev = 'v4.13'
+-subarr_subgen_patch_rev = 'v4.10'
 +subarr_subgen_patch_rev = 'v4.14'
  
  """
@@ -49,7 +52,7 @@ index c72fcf9..1328544 100644
  # Whisper Configuration
  whisper_model = os.getenv('WHISPER_MODEL', 'medium')
  whisper_threads = int(os.getenv('WHISPER_THREADS', 4))
-@@ -740,6 +747,7 @@ def queue_status():
+@@ -733,6 +740,7 @@ def queue_status():
          # on each integration health probe and degrades gracefully (e.g. doesn't
          # send audio_language_override to a subgen that wouldn't understand it).
          "subarr_subgen_patch_rev": subarr_subgen_patch_rev,
@@ -57,10 +60,17 @@ index c72fcf9..1328544 100644
          "capabilities": {
              "audio_language_override": True,
              # [v4.8 PATCH #88] per-request kwargs override on POST /batch
-@@ -794,10 +802,91 @@ def queue_status():
-             # row as an actionable gap when the connected subgen will actually
-             # fill it — vanilla/off subgen would still swallow it.
-             "ignore_forced_subtitles": bool(ignore_forced_subtitles),
+@@ -780,10 +788,98 @@ def queue_status():
+             # disables condition_on_previous_text + sets explicit silence
+             # thresholds. subarr can surface the toggle in subgen settings.
+             "safe_decode_preset": True,
++            # [v4.13 PATCH #79] forced target-language embedded subs are PARTIAL
++            # coverage; when IGNORE_FORCED_SUBTITLES is on this subgen transcribes
++            # forced-only files instead of skipping them. Exposed as the RUNTIME
++            # value (not just "supported") so subarr only presents a forced-only
++            # row as an actionable gap when the connected subgen will actually
++            # fill it — vanilla/off subgen would still swallow it.
++            "ignore_forced_subtitles": bool(ignore_forced_subtitles),
 +            # [v4.14 PATCH] POST /config can switch model/compute_type at
 +            # runtime with rollback — subarr's guided setup live-apply.
 +            "runtime_config": True,

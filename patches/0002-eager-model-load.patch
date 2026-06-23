@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: subarr-subgen <subarr@localhost>
 Date: Thu, 28 May 2026 22:54:56 +1000
-Subject: [PATCH 2/7] 0002: eager model load on boot
+Subject: [PATCH] 0002: eager model load on boot
 
 Loads + verifies the Whisper model at container start instead of lazily on first transcribe request. Means first-request latency is predictable and download errors fail fast on boot, not 10 minutes into a scan. Also clears VRAM after the eager-verify when clear_vram_on_complete is set.
 ---
@@ -9,10 +9,10 @@ Loads + verifies the Whisper model at container start instead of lazily on first
  1 file changed, 19 insertions(+)
 
 diff --git a/subgen.py b/subgen.py
-index 225bcc7..30dc5e4 100644
+index 53e5d7d..c14f01d 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2368,6 +2368,25 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+@@ -2563,6 +2563,25 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
  
  
  if __name__ == "__main__":
