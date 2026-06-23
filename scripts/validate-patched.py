@@ -50,9 +50,11 @@ def fn_returns_string_constant(tree, name):
     for n in ast.walk(tree):
         if isinstance(n, ast.FunctionDef) and n.name == name:
             for sub in ast.walk(n):
-                if (isinstance(sub, ast.Return)
-                        and isinstance(sub.value, ast.Constant)
-                        and isinstance(sub.value.value, str)):
+                if (
+                    isinstance(sub, ast.Return)
+                    and isinstance(sub.value, ast.Constant)
+                    and isinstance(sub.value.value, str)
+                ):
                     return True
     return False
 
@@ -84,21 +86,29 @@ def main() -> int:
 
     # Gate: patch 0024 (per-request ignore_forced threading)
     if "ignore_forced" not in (ba_args or []):
-        fail(f"batch() missing 'ignore_forced' arg (got {ba_args}) — patch 0024 not landed")
+        fail(
+            f"batch() missing 'ignore_forced' arg (got {ba_args}) — patch 0024 not landed"
+        )
     ok("batch() has ignore_forced (patch 0024)")
 
     ssf_args = fn_args(tree, "should_skip_file")
     if not ssf_args or "ignore_forced_override" not in ssf_args:
-        fail(f"should_skip_file missing 'ignore_forced_override' (got {ssf_args}) — patch 0024")
+        fail(
+            f"should_skip_file missing 'ignore_forced_override' (got {ssf_args}) — patch 0024"
+        )
     ok("should_skip_file has ignore_forced_override (patch 0024)")
 
     hisl_args = fn_args(tree, "has_internal_subtitle_in_language")
     if not hisl_args or "ignore_forced_override" not in hisl_args:
-        fail(f"has_internal_subtitle_in_language missing 'ignore_forced_override' (got {hisl_args}) — patch 0024")
+        fail(
+            f"has_internal_subtitle_in_language missing 'ignore_forced_override' (got {hisl_args}) — patch 0024"
+        )
     ok("has_internal_subtitle_in_language has ignore_forced_override (patch 0024)")
 
     if not fn_returns_string_constant(tree, "gen_subtitles_queue"):
-        fail("gen_subtitles_queue has no string-constant return — patch 0005 not landed")
+        fail(
+            "gen_subtitles_queue has no string-constant return — patch 0005 not landed"
+        )
     ok("gen_subtitles_queue returns dispatch strings")
 
     # Gate 5-9: text presence
@@ -107,16 +117,32 @@ def main() -> int:
         ("Eager model load on boot", "patch 0002 (eager-load)"),
         ("[v4.2 PATCH] _queued / _processing track", "patch 0007 (DQ type-tracking)"),
         ('@app.get("/queue")', "patch 0007 (/queue endpoint)"),
-        ("from fastapi.responses import StreamingResponse, JSONResponse",
-         "patch 0006 (JSONResponse import)"),
+        (
+            "from fastapi.responses import StreamingResponse, JSONResponse",
+            "patch 0006 (JSONResponse import)",
+        ),
         ("[v4.1 PATCH] Structured dispatch counts", "patch 0003 (structured counts)"),
         ("return JSONResponse(content=result", "patch 0004 (/batch JSONResponse)"),
         ('@app.post("/config")', "patch 0022 (/config endpoint)"),
         ('"runtime_config": True', "patch 0022 (runtime_config capability)"),
         ("subarr_subgen_release_tag", "patch 0022 (release tag emission)"),
-        ('"concurrent_transcriptions": concurrent_transcriptions', "patch 0023 (concurrent_transcriptions capability)"),
-        ('"request_ignore_forced": True', "patch 0024 (request_ignore_forced capability)"),
+        (
+            '"concurrent_transcriptions": concurrent_transcriptions',
+            "patch 0023 (concurrent_transcriptions capability)",
+        ),
+        (
+            '"request_ignore_forced": True',
+            "patch 0024 (request_ignore_forced capability)",
+        ),
         ("_eff_ignore_forced", "patch 0024 (per-request forced override logic)"),
+        ("def path_is_allowed", "patch 0025 (#13 containment helper)"),
+        ("SUBGEN_PATH_ALLOWLIST", "patch 0025 (#13 containment allowlist env)"),
+        ("if not path_is_allowed(audio_path):", "patch 0025 (#13 /asr containment)"),
+        (
+            "if not path_is_allowed(path_mapping(directory)):",
+            "patch 0025 (#13 /batch containment)",
+        ),
+        ("if not path_is_allowed(mapped):", "patch 0025 (#13 /detect containment)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
