@@ -29,3 +29,5 @@
 0023-expose-concurrent-transcriptions.patch
 0024-per-request-ignore-forced.patch
 0025-direct-path-containment-guard.patch
+0026-detect-language-track-param.patch
+0027-config-live-model-and-swap-lock.patch

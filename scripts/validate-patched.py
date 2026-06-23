@@ -143,6 +143,17 @@ def main() -> int:
             "patch 0025 (#13 /batch containment)",
         ),
         ("if not path_is_allowed(mapped):", "patch 0025 (#13 /detect containment)"),
+        (
+            "track: Union[int, None] = Query(default=None, ge=0, le=31)",
+            "patch 0026 (#17 detect track param)",
+        ),
+        (
+            '_out_kwargs["map"] = f"0:a:{track}"',
+            "patch 0026 (#17 per-track ffmpeg map)",
+        ),
+        ("model_load_lock = threading.RLock()", "patch 0027 (#6 swap RLock)"),
+        ("[PATCH 0027 / #6 item 2] live model", "patch 0027 (#6 live model in caps)"),
+        ("model_load_lock.acquire()", "patch 0027 (#6 atomic swap)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
