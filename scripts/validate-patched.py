@@ -158,7 +158,15 @@ def main() -> int:
             '"detect_language_track": True',
             "patch 0027 (#17 detect_language_track capability)",
         ),
-        ("subarr_subgen_patch_rev = 'v4.16'", "patch 0028 (patch_rev bump v4.16)"),
+        ("def _perform_config_switch", "patch 0029 (#6 async switch fn)"),
+        ("def _async_config_switch", "patch 0029 (#6 async switch thread)"),
+        ("wait: bool = Query(True)", "patch 0029 (#6 /config wait param)"),
+        (
+            '"config_switch": dict(_config_switch_state)',
+            "patch 0029 (#6 /queue config_switch)",
+        ),
+        ('"async_config": True', "patch 0029 (#6 async_config capability)"),
+        ("subarr_subgen_patch_rev = 'v4.17'", "patch 0030 (patch_rev bump v4.17)"),
     ]
     for needle, label in text_checks:
         if needle not in code:

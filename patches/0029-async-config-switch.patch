@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: s <s@l>
+Date: Wed, 24 Jun 2026 16:40:25 +1000
+Subject: [PATCH] 0029: async /config switch (?wait=false -> 202 + background
+ switch + /queue.config_switch + async_config cap) (#6 item 1)
+
+---
+ subgen.py | 124 +++++++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 91 insertions(+), 33 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index e250ed5..da3ce87 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -346,6 +346,20 @@ model_cleanup_lock = Lock()
+ 
+ # Locks to ensure thread-safety during concurrent AI operations
+ model_load_lock = threading.RLock()  # [PATCH 0027 / #6] reentrant: /config swap holds it across start_model()
++
++# [PATCH 0029 / #6 item 1] async /config switch state. The model swap can take
++# minutes (uncached-model download), blowing a synchronous client's read timeout.
++# With ?wait=false the switch runs on a background thread, /config returns 202,
++# and this state is surfaced in GET /queue.config_switch so the client polls.
++_config_switch_lock = threading.Lock()
++_config_switch_state = {
++    "state": "idle",  # idle | switching | done | failed
++    "model": None,
++    "compute_type": None,
++    "reason": None,
++    "detail": None,
++    "rolled_back": None,
++}
+ active_direct_tasks = 0
+ active_direct_tasks_lock = Lock()
+ 
+@@ -741,6 +755,8 @@ def queue_status():
+         # truth here instead of Config.Env.
+         "model": whisper_model,
+         "compute_type": compute_type,
++        # [PATCH 0029 / #6 item 1] async /config switch progress for the client to poll.
++        "config_switch": dict(_config_switch_state),
+         # [v4.3 PATCH] subarr capability detection. subarr inspects these flags
+         # on each integration health probe and degrades gracefully (e.g. doesn't
+         # send audio_language_override to a subgen that wouldn't understand it).
+@@ -752,6 +768,7 @@ def queue_status():
+             # audio stream) so subarr can language-detect a specific non-default
+             # track -- gates the Review "re-run on track N" confirmation UI.
+             "detect_language_track": True,
++            "async_config": True,
+             # [v4.8 PATCH #88] per-request kwargs override on POST /batch
+             # (?kwargs=<json>) — overrides global SUBGEN_KWARGS for one batch so
+             # subarr's tuning-lab/tournament arena trials configs without env+restart.
+@@ -836,41 +853,15 @@ _ALLOWED_RUNTIME_MODELS = {
+ _ALLOWED_COMPUTE_TYPES = {'auto', 'int8', 'int8_float16', 'float16', 'float32'}
+ 
+ 
+-@app.post("/config")
+-def runtime_config(model_name: str = Query(None, alias="model"),
+-                   compute: str = Query(None, alias="compute_type")):
++def _perform_config_switch(model_name, compute):
++    """[PATCH 0029 / #6] The model/compute teardown+reload. Returns
++    (status_code, body_dict). Holds model_load_lock across the whole op (#6 item
++    3). Shared by the sync (?wait=true) and async (?wait=false) /config paths."""
+     global whisper_model, compute_type, model
+-    if model_name is None and compute is None:
+-        return JSONResponse(status_code=400, content={
+-            "ok": False, "reason": "nothing_to_change",
+-            "current_model": whisper_model, "current_compute_type": compute_type})
+-    if model_name is not None and model_name not in _ALLOWED_RUNTIME_MODELS:
+-        return JSONResponse(status_code=400, content={
+-            "ok": False, "reason": "unknown_model",
+-            "current_model": whisper_model, "current_compute_type": compute_type})
+-    if compute is not None and compute not in _ALLOWED_COMPUTE_TYPES:
+-        return JSONResponse(status_code=400, content={
+-            "ok": False, "reason": "unknown_compute_type",
+-            "current_model": whisper_model, "current_compute_type": compute_type})
+-    # Busy check mirrors perform_model_cleanup(): the queue must be idle
+-    # (nothing queued, nothing processing) AND no direct (/asr-style)
+-    # tasks in flight.
+-    with active_direct_tasks_lock:
+-        busy = (not task_queue.is_idle()) or active_direct_tasks > 0
+-    if busy:
+-        return JSONResponse(status_code=409, content={
+-            "ok": False, "reason": "busy",
+-            "detail": "jobs queued or processing; retry when idle",
+-            "current_model": whisper_model, "current_compute_type": compute_type})
+-
+     prev_model_name, prev_compute = whisper_model, compute_type
+-    # [PATCH 0027 / #6 item 3] hold model_load_lock across the WHOLE teardown+
+-    # reload so a transcribe load can't interleave mid-swap (busy-check alone is
+-    # non-atomic). RLock -> the nested start_model() acquire is fine.
+     model_load_lock.acquire()
+     try:
+         if model is not None:
+-            # Mirror the perform_model_cleanup() release idiom.
+             try:
+                 model.model.unload_model()
+             except Exception as unload_err:
+@@ -886,7 +877,7 @@ def runtime_config(model_name: str = Query(None, alias="model"),
+             compute_type = compute
+         start_model()  # raises on bad load / OOM
+         logging.info(f"[runtime_config] switched: model={whisper_model} compute_type={compute_type}")
+-        return {"ok": True, "model": whisper_model, "compute_type": compute_type}
++        return 200, {"ok": True, "model": whisper_model, "compute_type": compute_type}
+     except Exception as e:
+         logging.error(f"[runtime_config] load failed ({e}); rolling back to {prev_model_name}/{prev_compute}")
+         whisper_model, compute_type = prev_model_name, prev_compute
+@@ -897,16 +888,83 @@ def runtime_config(model_name: str = Query(None, alias="model"),
+         except Exception as e2:
+             rolled_back = False
+             logging.error(f"[runtime_config] ROLLBACK LOAD ALSO FAILED: {e2}")
+-        return JSONResponse(status_code=422, content={
++        return 422, {
+             "ok": False,
+             "reason": "oom" if "out of memory" in str(e).lower() else "load_failed",
+             "detail": str(e)[:300],
+             "rolled_back": rolled_back,
+-            "current_model": whisper_model, "current_compute_type": compute_type})
++            "current_model": whisper_model, "current_compute_type": compute_type,
++        }
+     finally:
+         model_load_lock.release()
+ 
+ 
++def _async_config_switch(model_name, compute):
++    """[PATCH 0029] Run _perform_config_switch on a background thread, recording
++    progress in _config_switch_state for GET /queue to surface."""
++    with _config_switch_lock:
++        _config_switch_state.update({
++            "state": "switching", "model": model_name or whisper_model,
++            "compute_type": compute or compute_type,
++            "reason": None, "detail": None, "rolled_back": None,
++        })
++    _status, body = _perform_config_switch(model_name, compute)
++    with _config_switch_lock:
++        _config_switch_state.update({
++            "state": "done" if body.get("ok") else "failed",
++            "model": body.get("model") or whisper_model,
++            "compute_type": body.get("compute_type") or compute_type,
++            "reason": body.get("reason"), "detail": body.get("detail"),
++            "rolled_back": body.get("rolled_back"),
++        })
++
++
++@app.post("/config")
++def runtime_config(model_name: str = Query(None, alias="model"),
++                   compute: str = Query(None, alias="compute_type"),
++                   wait: bool = Query(True)):
++    global whisper_model, compute_type, model
++    if model_name is None and compute is None:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "nothing_to_change",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    if model_name is not None and model_name not in _ALLOWED_RUNTIME_MODELS:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "unknown_model",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    if compute is not None and compute not in _ALLOWED_COMPUTE_TYPES:
++        return JSONResponse(status_code=400, content={
++            "ok": False, "reason": "unknown_compute_type",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++    # Busy check mirrors perform_model_cleanup(): the queue must be idle
++    # (nothing queued, nothing processing) AND no direct (/asr-style)
++    # tasks in flight.
++    with active_direct_tasks_lock:
++        busy = (not task_queue.is_idle()) or active_direct_tasks > 0
++    if busy:
++        return JSONResponse(status_code=409, content={
++            "ok": False, "reason": "busy",
++            "detail": "jobs queued or processing; retry when idle",
++            "current_model": whisper_model, "current_compute_type": compute_type})
++
++    # [PATCH 0029 / #6 item 1] async opt-in: ?wait=false kicks the (slow, possibly
++    # minutes-long) switch on a background thread + returns 202; the client polls
++    # GET /queue.config_switch for completion. Default wait=true keeps the
++    # synchronous contract (backward-compatible with pre-async_config subarr).
++    if not wait:
++        with _config_switch_lock:
++            if _config_switch_state.get("state") == "switching":
++                return JSONResponse(status_code=409, content={
++                    "ok": False, "reason": "switch_in_progress",
++                    "current_model": whisper_model, "current_compute_type": compute_type})
++        threading.Thread(target=_async_config_switch, args=(model_name, compute), daemon=True).start()
++        return JSONResponse(status_code=202, content={
++            "status": "switching", "model": model_name or whisper_model,
++            "compute_type": compute or compute_type})
++    status_code, body = _perform_config_switch(model_name, compute)
++    return body if status_code == 200 else JSONResponse(status_code=status_code, content=body)
++
++
+ # [v4.4 PATCH] Cancel a queued task by path. 200 with {cancelled: true}
+ # if removed, 200 with {cancelled: false, reason: ...} if the task was
+ # already processing or not present (those aren't error states, just
