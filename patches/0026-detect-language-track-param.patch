@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: s <s@l>
+Date: Wed, 24 Jun 2026 08:40:43 +1000
+Subject: [PATCH] 0026: per-track param for detect_language_robust (#17)
+
+---
+ subgen.py | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index 80e11f3..fa020bb 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -1935,7 +1935,7 @@ def detect_language_task(path, original_task_data=None):
+ # Returns the full per-chunk breakdown so the caller can render evidence
+ # in the review UI ("EN at 0:30s 0.97 / JA at 30:00 0.41 / EN at 55:00 0.92
+ # → marked SUSPECT for review").
+-def detect_language_robust_task(path: str, chunks: int = 3, chunk_length_s: int = 30) -> dict:
++def detect_language_robust_task(path: str, chunks: int = 3, chunk_length_s: int = 30, track: Union[int, None] = None) -> dict:
+     import ffmpeg as _ff
+     from collections import Counter as _Counter
+     result_payload = {
+@@ -1976,7 +1976,7 @@ def detect_language_robust_task(path: str, chunks: int = 3, chunk_length_s: int
+         per_chunk: list[dict] = []
+         for off in offsets:
+             try:
+-                audio_seg = extract_audio_segment_to_memory(path, off, chunk_length_s)
++                audio_seg = extract_audio_segment_to_memory(path, off, chunk_length_s, track=track)
+                 if not audio_seg:
+                     per_chunk.append({"offset_s": off, "language": "und",
+                                       "probability": 0.0, "error": "extract_failed"})
+@@ -2027,6 +2027,7 @@ def detect_language_robust(
+     path: Union[str, None] = Query(default=None),
+     chunks: int = Query(default=3, ge=1, le=10),
+     chunk_length_s: int = Query(default=30, ge=5, le=120),
++    track: Union[int, None] = Query(default=None, ge=0, le=31),
+ ):
+     """[v4.5 PATCH] Multi-chunk Whisper language detection for a local
+     file. Synchronous — blocks the request until all chunks are processed.
+@@ -2046,13 +2047,13 @@ def detect_language_robust(
+         active_direct_tasks += 1
+     try:
+         return detect_language_robust_task(mapped, chunks=chunks,
+-                                           chunk_length_s=chunk_length_s)
++                                           chunk_length_s=chunk_length_s, track=track)
+     finally:
+         with active_direct_tasks_lock:
+             active_direct_tasks -= 1
+ 
+ 
+-def extract_audio_segment_to_memory(input_file, start_time, duration):
++def extract_audio_segment_to_memory(input_file, start_time, duration, track=None):
+     """
+     Extract a segment of audio from input_file, starting at start_time for duration seconds.
+     
+@@ -2077,11 +2078,17 @@ def extract_audio_segment_to_memory(input_file, start_time, duration):
+ 
+         logging.info(f"Extracting audio from: {input_stream}, start_time: {start_time}, duration: {duration}")
+ 
+-        # Run FFmpeg to extract the desired segment
++        # Run FFmpeg to extract the desired segment.
++        # [PATCH 0026 / #17] when `track` is given, map a SPECIFIC audio stream
++        # (0-based among audio streams, ffmpeg 0:a:N) so subarr can language-
++        # detect a non-default track; omitted -> ffmpeg's default auto-select.
++        _out_kwargs = {"format": "wav", "acodec": "pcm_s16le", "ar": 16000}
++        if track is not None:
++            _out_kwargs["map"] = f"0:a:{track}"
+         out, _ = (
+             ffmpeg
+             .input(input_stream, ss=start_time, t=duration) # Set start time and duration
+-            .output('pipe:1', format='wav', acodec='pcm_s16le', ar=16000) # Output to pipe as WAV
++            .output('pipe:1', **_out_kwargs) # Output to pipe as WAV
+             .run(capture_stdout=True, capture_stderr=True, **input_kwargs)
+         )
+ 

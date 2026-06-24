@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: s <s@l>
+Date: Wed, 24 Jun 2026 07:48:28 +1000
+Subject: [PATCH] 0025: media-root containment guard for path-accepting
+ endpoints + detect active-task count
+
+---
+ subgen.py | 48 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index bebbf57..80e11f3 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -1117,6 +1117,11 @@ def batch(
+     # check (same effect as the global IGNORE_FORCED_SUBTITLES, but scoped to
+     # THIS job). Drives subarr's "transcribe a full sub anyway" action on a
+     # forced-only file. Default False -> behaviour identical to before.
++    if not path_is_allowed(path_mapping(directory)):  # [PATCH 0025 / #13]
++        return JSONResponse(
++            content={"walked": 0, "error": "directory is outside the allowed media root"},
++            status_code=403,
++        )
+     result = transcribe_existing(
+         directory, LanguageCode.from_string(forceLanguage), reverse,
+         audio_language_override=LanguageCode.from_string(audio_language_override)
+@@ -1194,6 +1199,8 @@ async def asr(
+         audio_path = None
+         if path:
+             audio_path = path_mapping(path)
++            if not path_is_allowed(audio_path):  # [PATCH 0025 / #13]
++                return {"status": "error", "message": "path is outside the allowed media root"}
+             if not os.path.isfile(audio_path):
+                 return {"status": "error", "message": f"path not found in subgen: {audio_path}"}
+             video_file = audio_path  # seed offset detection + display + task_id
+@@ -2029,8 +2036,20 @@ def detect_language_robust(
+     bulk runs; do not chain in tight loops."""
+     if not path or not path.strip():
+         return JSONResponse({"error": "path is required"}, status_code=400)
+-    return detect_language_robust_task(path.strip(), chunks=chunks,
+-                                       chunk_length_s=chunk_length_s)
++    mapped = path_mapping(path.strip())
++    if not path_is_allowed(mapped):  # [PATCH 0025 / #13]
++        return JSONResponse({"error": "path is outside the allowed media root"}, status_code=403)
++    # [PATCH 0025 / #13] count toward active_direct_tasks so /config's busy-check
++    # won't unload the model mid-detection (0011 ran inference untracked).
++    global active_direct_tasks
++    with active_direct_tasks_lock:
++        active_direct_tasks += 1
++    try:
++        return detect_language_robust_task(mapped, chunks=chunks,
++                                           chunk_length_s=chunk_length_s)
++    finally:
++        with active_direct_tasks_lock:
++            active_direct_tasks -= 1
+ 
+ 
+ def extract_audio_segment_to_memory(input_file, start_time, duration):
+@@ -3126,6 +3145,31 @@ def path_mapping(fullpath):
+         return fullpath.replace(path_mapping_from, path_mapping_to)
+     return fullpath
+ 
++
++# [PATCH 0025 / subarr-subgen #13] Containment guard for the path-accepting
++# endpoints (/asr ?path=, /batch ?directory=, /detect_language_robust ?path=).
++# They run unauthenticated on the LAN; without this, POST /asr?path=/proc/1/environ
++# reads container secrets and /batch?directory=/ walks the whole filesystem.
++# Restrict accessed paths to a realpath allowlist (SUBGEN_PATH_ALLOWLIST,
++# colon-separated, default "/media"). os.path.realpath is symlink-safe, so an
++# in-media symlink to /etc is rejected too. Empty allowlist disables the check.
++_subgen_path_allowlist = [
++    os.path.realpath(p.strip())
++    for p in os.environ.get("SUBGEN_PATH_ALLOWLIST", "/media").split(":")
++    if p.strip()
++]
++
++
++def path_is_allowed(fullpath):
++    if not _subgen_path_allowlist:
++        return True
++    try:
++        rp = os.path.realpath(fullpath)
++    except (OSError, ValueError):
++        return False
++    return any(rp == root or rp.startswith(root + os.sep) for root in _subgen_path_allowlist)
++
++
+ def is_file_stable(file_path, wait_time=2, check_intervals=3):
+     """Returns True if the file size is stable for a given number of checks."""
+     if not os.path.exists(file_path):
