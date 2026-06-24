@@ -32,3 +32,5 @@
 0026-detect-language-track-param.patch
 0027-config-live-model-and-swap-lock.patch
 0028-bump-patch-rev-v4.16.patch
+0029-async-config-switch.patch
+0030-bump-patch-rev-v4.17.patch
