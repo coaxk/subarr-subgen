@@ -158,6 +158,7 @@ def main() -> int:
             '"detect_language_track": True',
             "patch 0027 (#17 detect_language_track capability)",
         ),
+        ("subarr_subgen_patch_rev = 'v4.16'", "patch 0028 (patch_rev bump v4.16)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
