@@ -154,6 +154,10 @@ def main() -> int:
         ("model_load_lock = threading.RLock()", "patch 0027 (#6 swap RLock)"),
         ("[PATCH 0027 / #6 item 2] live model", "patch 0027 (#6 live model in caps)"),
         ("model_load_lock.acquire()", "patch 0027 (#6 atomic swap)"),
+        (
+            '"detect_language_track": True',
+            "patch 0027 (#17 detect_language_track capability)",
+        ),
     ]
     for needle, label in text_checks:
         if needle not in code:
