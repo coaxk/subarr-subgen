@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: s <s@l>
+Date: Mon, 29 Jun 2026 21:30:00 +1000
+Subject: [PATCH] 0031: fix detect_language_robust per-chunk probability (#396)
+
+stable_whisper's load_faster_whisper transcribe returns a WhisperResult built
+from dict(language=, segments=) only -- it drops faster-whisper's
+info.language_probability. So `getattr(res, 'language_probability', 0.0)` was
+ALWAYS 0.0 and every chunk reported p=0.00 in the robust-detect evidence.
+
+Use faster-whisper's WhisperModel.detect_language() directly (the load_faster_whisper
+object IS a WhisperModel) for the real per-chunk probability. It's language-only
+(no full transcription), so it's also faster than the previous per-chunk transcribe.
+
+diff --git a/subgen.py b/subgen.py
+index 078f397..e243fb2 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2054,9 +2054,19 @@ def detect_language_robust_task(path: str, chunks: int = 3, chunk_length_s: int
+                     per_chunk.append({"offset_s": off, "language": "und",
+                                       "probability": 0.0, "error": "extract_failed"})
+                     continue
+-                res = model.transcribe(audio_seg, verbose=False)
+-                lc = LanguageCode.from_string(res.language)
+-                prob = float(getattr(res, 'language_probability', 0.0) or 0.0)
++                # #396: stable_whisper's WhisperResult drops language_probability
++                # (load_faster_whisper returns dict(language=, segments=) only), so
++                # the old getattr was ALWAYS 0.0 -> every chunk showed p=0.00. Use
++                # faster-whisper's detect_language directly for the real per-chunk
++                # probability; it's language-only, so also faster than the full
++                # transcribe we ran before. audio_seg is 16kHz mono WAV bytes.
++                import io as _io
++                from faster_whisper.audio import decode_audio as _decode_audio
++                language, prob, _all_probs = model.detect_language(
++                    audio=_decode_audio(_io.BytesIO(audio_seg))
++                )
++                lc = LanguageCode.from_string(language)
++                prob = float(prob or 0.0)
+                 per_chunk.append({
+                     "offset_s": off,
+                     "language": lc.to_iso_639_1(),
+-- 
+2.43.0
