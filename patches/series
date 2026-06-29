@@ -34,3 +34,5 @@
 0028-bump-patch-rev-v4.16.patch
 0029-async-config-switch.patch
 0030-bump-patch-rev-v4.17.patch
+0031-fix-robust-detect-probability.patch
+0032-bump-patch-rev-v4.18.patch
