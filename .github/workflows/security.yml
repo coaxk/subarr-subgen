@@ -38,10 +38,10 @@ jobs:
       security-events: write # upload-sarif (best-effort)
       actions: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with: { python-version: "3.11" }
       - run: pip install bandit[sarif]
       - name: bandit -r scripts/
@@ -51,7 +51,7 @@ jobs:
           bandit -r scripts/ -ll -ii --skip B101
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
         with:
           sarif_file: bandit.sarif
           category: bandit
@@ -68,7 +68,7 @@ jobs:
       # trivy-action Mar-2026 tag-poisoning lesson. Same pin as coaxk/subarr.
       image: semgrep/semgrep@sha256:03402a5040a88a570dec58375ef1a19fa777dd61575afdc7d5527ddf308dd765
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           persist-credentials: false
@@ -81,7 +81,7 @@ jobs:
         run: semgrep ci --sarif --output=semgrep.sarif || true
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -94,11 +94,11 @@ jobs:
       security-events: write # upload-sarif (best-effort)
       actions: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           persist-credentials: false
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: free disk space (CUDA 12.8 base + torch cu128 need headroom)
         run: |
           # Same reclaim as release.yml — the trivy job builds the full image,
@@ -155,7 +155,7 @@ jobs:
           scanners: vuln
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
         with:
           sarif_file: trivy.sarif
           category: trivy
