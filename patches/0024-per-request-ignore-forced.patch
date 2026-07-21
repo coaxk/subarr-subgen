@@ -104,16 +104,15 @@ index 217e26e..bebbf57 100644
      """
      Determines if subtitle generation should be skipped for a file.
  
-@@ -2625,7 +2641,8 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
- 
-     # 4. Skip if a subtitle already exists in the target language.
-     if skip_if_target_subtitle_exists:
--        if subtitle_exists_in_language(file_path, target_language):
-+        if subtitle_exists_in_language(file_path, target_language,
-+                                       ignore_forced_override=ignore_forced_override):
-             if target_language == LanguageCode.NONE:
-                 logging.info(f"Skipping {base_name}: Subtitles already exist and audio language could not be detected from file metadata.")
-             else:
+@@ -2629,6 +2645,7 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
+         named_output_configured = subtitle_language_name and LanguageCode.is_valid_language(subtitle_language_name)
+         if not (target_language == LanguageCode.NONE and named_output_configured):
+-            if subtitle_exists_in_language(file_path, target_language):
++            if subtitle_exists_in_language(file_path, target_language,
++                                           ignore_forced_override=ignore_forced_override):
+                 if target_language == LanguageCode.NONE:
+                     logging.info(f"Skipping {base_name}: Subtitles already exist and audio language could not be detected from file metadata.")
+                 else:
 @@ -2708,7 +2725,7 @@ def get_audio_languages(video_path):
      audio_tracks = get_audio_tracks(video_path)
      return [track['language'] for track in audio_tracks] 
@@ -123,12 +122,13 @@ index 217e26e..bebbf57 100644
      """
      Determines if a subtitle file with the target language is available for a specified video file.
  
-@@ -2722,9 +2739,9 @@ def subtitle_exists_in_language(video_file, target_language: LanguageCode):
-     Returns:
-         bool: True if a subtitle file with the target language is found, False otherwise.
-     """
--    return has_internal_subtitle_in_language(video_file, target_language) or has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
-+    return has_internal_subtitle_in_language(video_file, target_language, ignore_forced_override=ignore_forced_override) or has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
+@@ -2735,10 +2752,10 @@ def subtitle_exists_in_language(video_file, target_language: LanguageCode):
+     # Embedded tracks can never be subgen-created files, so when only_match_subgen_subtitles
+     # is set, internal subtitle streams should not count as coverage.
+-    internal = (not only_match_subgen_subtitles) and has_internal_subtitle_in_language(video_file, target_language)
++    internal = (not only_match_subgen_subtitles) and has_internal_subtitle_in_language(video_file, target_language, ignore_forced_override=ignore_forced_override)
+     external = has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
+     return internal or external
  
 -def has_internal_subtitle_in_language(video_file: str, target_language: LanguageCode) -> bool:
 +def has_internal_subtitle_in_language(video_file: str, target_language: LanguageCode, ignore_forced_override: bool | None = None) -> bool:

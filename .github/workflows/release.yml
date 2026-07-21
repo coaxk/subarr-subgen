@@ -72,7 +72,7 @@ jobs:
           echo "image_upstream=ghcr.io/coaxk/subarr-subgen:${UPSTREAM}" >> $GITHUB_OUTPUT
           echo "image_latest=ghcr.io/coaxk/subarr-subgen:latest" >> $GITHUB_OUTPUT
 
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       # Note: linux/arm64 builds are deliberately out of scope for v1.0.
       # The upstream subgen NVIDIA CUDA base image targets amd64 and ARM64
       # isn't a realistic homelab combo for whisper transcription. Users
@@ -82,7 +82,7 @@ jobs:
       # is available.
 
       - name: login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -109,7 +109,7 @@ jobs:
           rm -rf build/.git
 
       - name: build + push (linux/amd64)
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: build/
           file: docker/Dockerfile
@@ -129,7 +129,7 @@ jobs:
         # Deliberate keep: the action is SHA-pinned, battle-tested on this exact
         # flow (r1-r8), and swapping the release path for an info-level nit is
         # churn where breakage hurts most. Revisit if the pin ever goes stale.
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.0 # zizmor: ignore[superfluous-actions]
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1 # zizmor: ignore[superfluous-actions]
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}

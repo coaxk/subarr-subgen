@@ -166,7 +166,12 @@ def main() -> int:
             "patch 0029 (#6 /queue config_switch)",
         ),
         ('"async_config": True', "patch 0029 (#6 async_config capability)"),
-        ("subarr_subgen_patch_rev = 'v4.17'", "patch 0030 (patch_rev bump v4.17)"),
+        # patch_rev is cumulative -- each bump patch overwrites the last, so the
+        # only value observable in the fully-patched tree is the newest one.
+        # Assert against the LAST bump patch in the series and update this needle
+        # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
+        # landed v4.18, and this check failed silently behind an apply failure).
+        ("subarr_subgen_patch_rev = 'v4.18'", "patch 0032 (patch_rev bump v4.18, latest)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
