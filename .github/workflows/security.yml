@@ -110,7 +110,31 @@ jobs:
           df -h /
       - name: build image (no push)
         run: bash scripts/build.sh
-      - name: trivy scan
+      # Split into a gate + an artifact producer. In format=sarif mode,
+      # trivy-action internally scans with "all severities" to populate the
+      # code-scanning UI, and the `severity` + `ignore-unfixed` filters DO NOT
+      # propagate to the exit-code check -- so a single SARIF step with
+      # exit-code 1 fails on LOW findings we explicitly said we do not gate on.
+      # Filed upstream: https://github.com/aquasecurity/trivy-action/issues/389
+      #
+      # Bit us 2026-07-21: CVE-2025-3000 in torch (trivy severity LOW, no fix
+      # available for the cu128 wheel) reddened main even though the gate is
+      # declared HIGH,CRITICAL. Same split as coaxk/subarr's security.yml.
+      - name: trivy scan (gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: subarr-subgen:dev
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          timeout: "20m"
+          scanners: vuln
+      - name: trivy scan (SARIF artifact)
+        # exit-code 0 -- the gate above already decided pass/fail. This step
+        # exists only to keep feeding the code-scanning UI, where LOW/MEDIUM
+        # findings stay visible.
+        if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: subarr-subgen:dev
@@ -119,7 +143,7 @@ jobs:
           # We fail on HIGH/CRITICAL only — upstream's CUDA base image
           # ships its own pile of MEDIUM-and-below findings we can't fix.
           severity: HIGH,CRITICAL
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: true
           # The cu128 torch stack ships a ~2GB libtorch_cuda.so; trivy's
           # default 5m deadline isn't enough to walk it and it dies with
