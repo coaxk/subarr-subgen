@@ -51,7 +51,7 @@ jobs:
           bandit -r scripts/ -ll -ii --skip B101
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: bandit.sarif
           category: bandit
@@ -81,7 +81,7 @@ jobs:
         run: semgrep ci --sarif --output=semgrep.sarif || true
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -98,7 +98,7 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: free disk space (CUDA 12.8 base + torch cu128 need headroom)
         run: |
           # Same reclaim as release.yml — the trivy job builds the full image,
@@ -131,7 +131,7 @@ jobs:
           scanners: vuln
       - if: always()
         continue-on-error: true   # code-scanning/GHAS not enabled on this private repo; don't red the job on upload (#163)
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: trivy.sarif
           category: trivy
