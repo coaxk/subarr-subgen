@@ -60,6 +60,32 @@ jobs:
           if [[ -z "$TAG" || "$TAG" == "$GITHUB_REF" ]]; then
             TAG="$INPUT_TAG"
           fi
+
+          # Guard: the tag must EXIST and must point at the commit we are
+          # about to build. workflow_dispatch takes the tag as free text and
+          # never required it to exist, so a dispatch could publish an image
+          # labelled with a tag that is nowhere in the repo -- which is how
+          # 2026.06.4-r4 shipped with no git tag behind it, leaving the image
+          # users pull unreproducible from source.
+          #
+          # A tag push satisfies both checks by construction; this only ever
+          # bites a dispatch that got ahead of its tag.
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" > /dev/null; then
+            echo "::error::tag ${TAG} does not exist in this repository."
+            echo "::error::Create and push it first:  git tag -a ${TAG} -m '...' && git push origin ${TAG}"
+            echo "::error::Publishing an image named after a tag that does not exist makes it unreproducible."
+            exit 1
+          fi
+          TAG_SHA="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [[ "$TAG_SHA" != "$HEAD_SHA" ]]; then
+            echo "::error::tag ${TAG} points at ${TAG_SHA} but this run is building ${HEAD_SHA}."
+            echo "::error::The published image would not match its own tag. Re-run the dispatch"
+            echo "::error::against the tagged commit, or move the tag."
+            exit 1
+          fi
+          echo "tag ${TAG} verified: exists and matches HEAD (${HEAD_SHA})"
+
           # Strip leading v and split on -r
           VERSION="${TAG#v}"
           UPSTREAM="${VERSION%-r*}"

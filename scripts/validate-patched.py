@@ -171,7 +171,7 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.18'", "patch 0032 (patch_rev bump v4.18, latest)"),
+        ("subarr_subgen_patch_rev = 'v4.19'", "patch 0034 (patch_rev bump v4.19, latest)"),
     ]
     for needle, label in text_checks:
         if needle not in code:
