@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Tue, 21 Jul 2026 16:40:00 +1000
+Subject: [PATCH] 0033: honour SKIP_STARTUP_SCAN at the startup call site only
+
+Upstream 2026.06.5 added SKIP_STARTUP_SCAN and implemented it as an early-out
+inside transcribe_existing(). That function has two callers: the lifespan boot
+thread and the POST /batch endpoint. subarr drives subgen entirely through
+/batch, so on upstream semantics an operator who sets SKIP_STARTUP_SCAN=1 (a
+reasonable "do not walk my whole library on boot" setting) would silently get a
+no-op for every transcription subarr requests, with a zero-count response and no
+error anywhere.
+
+This moves the gate to the boot call site, which is what the variable name
+actually describes. Upstream intent is preserved (no scan at startup) and
+explicit on-demand requests keep working. Pairs with patch 0003, which omits the
+in-function early-out.
+---
+diff --git a/subgen.py b/subgen.py
+index 7b5fbaa..599b173 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -222,7 +222,15 @@ AUDIO_EXTENSIONS = (
+ @asynccontextmanager
+ async def lifespan(app: FastAPI):
+     if transcribe_folders:
+-        threading.Thread(target=transcribe_existing, args=(transcribe_folders,), daemon=True).start()
++        # [PATCH] SKIP_STARTUP_SCAN is gated HERE, not inside transcribe_existing().
++        # Upstream 2026.06.5 put the check inside the function, but /batch calls the
++        # same function, so the env var also silenced every on-demand request. Gating
++        # at the boot call site keeps upstream's intent (no scan on startup) while
++        # leaving explicit /batch dispatch working.
++        if skip_startup_scan:
++            logging.info("SKIP_STARTUP_SCAN is enabled - skipping the startup scan of existing files.")
++        else:
++            threading.Thread(target=transcribe_existing, args=(transcribe_folders,), daemon=True).start()
+     yield
+ 
+ app = FastAPI(lifespan=lifespan)

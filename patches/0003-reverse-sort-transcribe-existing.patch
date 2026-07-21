@@ -4,15 +4,21 @@ Date: Thu, 28 May 2026 22:54:56 +1000
 Subject: [PATCH] 0003: reverse-sort transcribe_existing (full-unit replace)
 
 Replaces transcribe_existing() to (a) accept ?reverse=true so /batch can process newest files first, (b) collect-then-sort instead of walking in directory-iteration order, (c) tally outcomes per file into a structured counts dict for the /batch return shape. Subgenscan.ps1 Option 2 depends on this reverse param.
----
- subgen.py | 56 ++++++++++++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 49 insertions(+), 7 deletions(-)
 
+Rebased onto upstream 2026.07.1 (2026-07-21). Upstream rewrote this function in
+2026.06.5 to add the .subgen_skip directory marker and a SKIP_STARTUP_SCAN
+early-out. The marker walk-pruning is carried over verbatim. The
+SKIP_STARTUP_SCAN early-out is deliberately NOT carried here: upstream placed it
+inside this function, but /batch calls the same function, so SKIP_STARTUP_SCAN=1
+would silently turn every on-demand /batch request into a no-op returning zero
+counts. Patch 0026 gates the boot scan at the lifespan call site instead, which
+preserves upstream's intent without breaking explicit requests.
+---
 diff --git a/subgen.py b/subgen.py
-index c14f01d..c8dba6c 100644
+index 39aff2b..7b5fbaa 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2537,20 +2537,58 @@ class NewFileHandler(FileSystemEventHandler):
+@@ -2565,27 +2565,69 @@ class NewFileHandler(FileSystemEventHandler):
          self.handle_event(event)
  
  
@@ -20,9 +26,27 @@ index c14f01d..c8dba6c 100644
 +def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False):
 +    _orig_arg = transcribe_folders
      transcribe_folders = transcribe_folders.split("|")
--    logging.info("Starting to search folders to see if we need to create subtitles.")
+-    if skip_startup_scan:
+-        logging.info("SKIP_STARTUP_SCAN is enabled — skipping existing file scan.")
+-    else:
+-        logging.info("Starting to search folders to see if we need to create subtitles.")
+-        logging.debug("The folders are:")
+-        for path in transcribe_folders:
+-            logging.debug(path)
+-            for root, dirs, files in os.walk(path):
+-                if SKIP_MARKER in files:
+-                    logging.info(f"Skipping (skip marker present): {root}")
+-                    dirs.clear()
+-                    continue
+-                for file in files:
+-                    file_path = os.path.join(root, file)
+-                    gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
+-            # if the path specified was actually a single file and not a folder, process it
+-            if os.path.isfile(path):
+-                if has_audio(path):
+-                    gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
 +    logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
-     logging.debug("The folders are:")
++    logging.debug("The folders are:")
 +
 +    # [v4.1 PATCH] Structured dispatch counts for /batch return.
 +    counts = {
@@ -46,18 +70,24 @@ index c14f01d..c8dba6c 100644
 +        elif _result == "detect_pending":
 +            counts["pending_language_detect"] += 1
 +
++    # [PATCH] SKIP_STARTUP_SCAN is deliberately NOT honoured inside this function.
++    # Upstream (2026.06.5) put the check here, but /batch calls this same function,
++    # so an operator setting SKIP_STARTUP_SCAN=1 would silently turn every
++    # on-demand /batch request into a no-op returning zero counts. We gate the
++    # boot scan at the lifespan call site instead -- see patch 0033.
++
 +    # [v4 PATCH] Collect files first, then sort with optional reverse
 +    file_list = []
-     for path in transcribe_folders:
-         logging.debug(path)
-         for root, dirs, files in os.walk(path):
-             for file in files:
-                 file_path = os.path.join(root, file)
--                gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
--        # if the path specified was actually a single file and not a folder, process it
--        if os.path.isfile(path):
--            if has_audio(path):
--                gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
++    for path in transcribe_folders:
++        logging.debug(path)
++        for root, dirs, files in os.walk(path):
++            # [UPSTREAM 2026.06.5] a .subgen_skip marker prunes the whole subtree.
++            if SKIP_MARKER in files:
++                logging.info(f"Skipping (skip marker present): {root}")
++                dirs.clear()
++                continue
++            for file in files:
++                file_path = os.path.join(root, file)
 +                file_list.append(file_path)
 +
 +    file_list.sort(reverse=reverse)
@@ -78,7 +108,7 @@ index c14f01d..c8dba6c 100644
      # Set up the observer to watch for new files
      if monitor:
          observer = Observer()
-@@ -2561,6 +2599,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+@@ -2596,6 +2638,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
          observer.start()
          logging.info("Finished searching and queueing files for transcription. Now watching for new files.")
  

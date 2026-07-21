@@ -12,7 +12,7 @@ index 1f407da..7c3cf02 100644
 --- a/subgen.py
 +++ b/subgen.py
 @@ -1,4 +1,8 @@
- subgen_version = '2026.06.4'
+ subgen_version = '2026.07.1'
 +# [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
 +# can detect our extended capabilities (audio_language_override, etc.) and
 +# degrade gracefully against vanilla mccloud/subgen which lacks them.
