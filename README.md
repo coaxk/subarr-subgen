@@ -91,6 +91,27 @@ applies clean and smoke tests pass, we open a PR to bump the submodule pin.
 If a patch fails to apply, a sticky GitHub issue is opened so we know
 upstream restructured something we depend on. See [`docs/upstream-sync.md`](./docs/upstream-sync.md).
 
+## Dependabot action bumps go red on a comment, not a problem
+
+Dependabot regularly bumps a pinned action's SHA but writes the wrong version
+comment next to it (it has moved a pin to v3.0.2's commit while labelling it
+`# v3.0.1`). zizmor's `ref-version-mismatch` catches that and reds CI on
+basically every actions-group bump. The pin itself is fine; only the comment
+lies.
+
+Fix it with:
+
+```bash
+GH_TOKEN=$(gh auth token) python scripts/fix-action-pins.py
+```
+
+**Do not just run `zizmor --fix=unsafe-only`.** It works, but it also strips
+`# zizmor: ignore[...]` suppressions off the lines it rewrites, silently - it
+has eaten the `superfluous-actions` suppression on the release step twice. The
+script runs the same auto-fix, then puts the suppressions back, and **refuses
+the whole result if any pinned SHA actually moved**, so a comment tidy-up can
+never quietly become a supply-chain change.
+
 ## License + attribution
 
 This repo's tooling (build scripts, patches, CI workflows) is MIT licensed.
