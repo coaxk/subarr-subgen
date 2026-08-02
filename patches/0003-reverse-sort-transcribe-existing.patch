@@ -5,20 +5,21 @@ Subject: [PATCH] 0003: reverse-sort transcribe_existing (full-unit replace)
 
 Replaces transcribe_existing() to (a) accept ?reverse=true so /batch can process newest files first, (b) collect-then-sort instead of walking in directory-iteration order, (c) tally outcomes per file into a structured counts dict for the /batch return shape. Subgenscan.ps1 Option 2 depends on this reverse param.
 
-Rebased onto upstream 2026.07.1 (2026-07-21). Upstream rewrote this function in
-2026.06.5 to add the .subgen_skip directory marker and a SKIP_STARTUP_SCAN
-early-out. The marker walk-pruning is carried over verbatim. The
-SKIP_STARTUP_SCAN early-out is deliberately NOT carried here: upstream placed it
-inside this function, but /batch calls the same function, so SKIP_STARTUP_SCAN=1
-would silently turn every on-demand /batch request into a no-op returning zero
-counts. Patch 0026 gates the boot scan at the lifespan call site instead, which
-preserves upstream's intent without breaking explicit requests.
+Rebased onto upstream 2026.07.3 (2026-07-31). Upstream's .subgen_skip marker
+walk-pruning (added 2026.06.5) is carried over verbatim.
+
+Historical note: this patch previously also omitted upstream's in-function
+SKIP_STARTUP_SCAN early-out, because that flag gated /batch as well as the
+boot scan -- we reported it as McCloudS/subgen#345 and carried patch 0033 to
+gate it at the lifespan call site instead. Upstream ACCEPTED the fix in
+2026.07.2 (commit 304f489) and now does exactly that, so 0033 was dropped in
+this sync and there is no longer any divergence here to preserve.
 ---
 diff --git a/subgen.py b/subgen.py
-index 39aff2b..7b5fbaa 100644
+index 673c9fc..e199958 100644
 --- a/subgen.py
 +++ b/subgen.py
-@@ -2565,27 +2565,69 @@ class NewFileHandler(FileSystemEventHandler):
+@@ -2568,24 +2568,63 @@ class NewFileHandler(FileSystemEventHandler):
          self.handle_event(event)
  
  
@@ -26,27 +27,9 @@ index 39aff2b..7b5fbaa 100644
 +def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False):
 +    _orig_arg = transcribe_folders
      transcribe_folders = transcribe_folders.split("|")
--    if skip_startup_scan:
--        logging.info("SKIP_STARTUP_SCAN is enabled — skipping existing file scan.")
--    else:
--        logging.info("Starting to search folders to see if we need to create subtitles.")
--        logging.debug("The folders are:")
--        for path in transcribe_folders:
--            logging.debug(path)
--            for root, dirs, files in os.walk(path):
--                if SKIP_MARKER in files:
--                    logging.info(f"Skipping (skip marker present): {root}")
--                    dirs.clear()
--                    continue
--                for file in files:
--                    file_path = os.path.join(root, file)
--                    gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
--            # if the path specified was actually a single file and not a folder, process it
--            if os.path.isfile(path):
--                if has_audio(path):
--                    gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
+-    logging.info("Starting to search folders to see if we need to create subtitles.")
 +    logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
-+    logging.debug("The folders are:")
+     logging.debug("The folders are:")
 +
 +    # [v4.1 PATCH] Structured dispatch counts for /batch return.
 +    counts = {
@@ -70,24 +53,23 @@ index 39aff2b..7b5fbaa 100644
 +        elif _result == "detect_pending":
 +            counts["pending_language_detect"] += 1
 +
-+    # [PATCH] SKIP_STARTUP_SCAN is deliberately NOT honoured inside this function.
-+    # Upstream (2026.06.5) put the check here, but /batch calls this same function,
-+    # so an operator setting SKIP_STARTUP_SCAN=1 would silently turn every
-+    # on-demand /batch request into a no-op returning zero counts. We gate the
-+    # boot scan at the lifespan call site instead -- see patch 0033.
-+
 +    # [v4 PATCH] Collect files first, then sort with optional reverse
 +    file_list = []
-+    for path in transcribe_folders:
-+        logging.debug(path)
-+        for root, dirs, files in os.walk(path):
+     for path in transcribe_folders:
+         logging.debug(path)
+         for root, dirs, files in os.walk(path):
 +            # [UPSTREAM 2026.06.5] a .subgen_skip marker prunes the whole subtree.
-+            if SKIP_MARKER in files:
-+                logging.info(f"Skipping (skip marker present): {root}")
-+                dirs.clear()
-+                continue
-+            for file in files:
-+                file_path = os.path.join(root, file)
+             if SKIP_MARKER in files:
+                 logging.info(f"Skipping (skip marker present): {root}")
+                 dirs.clear()
+                 continue
+             for file in files:
+                 file_path = os.path.join(root, file)
+-                gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
+-        # if the path specified was actually a single file and not a folder, process it
+-        if os.path.isfile(path):
+-            if has_audio(path):
+-                gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
 +                file_list.append(file_path)
 +
 +    file_list.sort(reverse=reverse)
@@ -108,7 +90,7 @@ index 39aff2b..7b5fbaa 100644
      # Set up the observer to watch for new files
      if monitor:
          observer = Observer()
-@@ -2596,6 +2638,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
+@@ -2596,6 +2635,10 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
          observer.start()
          logging.info("Finished searching and queueing files for transcription. Now watching for new files.")
  
