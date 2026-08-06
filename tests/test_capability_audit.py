@@ -1,9 +1,13 @@
 # tests/test_capability_audit.py
+from pathlib import Path
+
 from scripts.capability_audit import (
     ADVERTISED_CAPABILITIES,
     build_capability_map,
     capabilities_added_by_patch,
 )
+
+PATCHES_DIR = Path(__file__).resolve().parent.parent / "patches"
 
 PATCH_WITH_CONTEXT = """--- a/subgen.py
 +++ b/subgen.py
@@ -80,8 +84,31 @@ def test_map_drops_non_capability_keys():
 
 
 def test_map_records_every_provider_for_a_capability():
+    # b.patch is listed first here on purpose: build_capability_map must sort
+    # its own output, not merely preserve whatever order the caller passed in.
     patches = {
-        "a.patch": '+                "runtime_config": True,\n',
         "b.patch": '+                "runtime_config": True,\n',
+        "a.patch": '+                "runtime_config": True,\n',
     }
     assert build_capability_map(patches)["runtime_config"] == ["a.patch", "b.patch"]
+
+
+def test_every_advertised_capability_is_provided_by_a_real_patch():
+    # Guards against DRIFT: if a future patch renames or drops one of the 16
+    # literals, capabilities_added_by_patch stops finding it and
+    # build_capability_map silently omits it -- indistinguishable downstream
+    # from "never provided". This must fail loudly, not pass vacuously, so it
+    # asserts the patch list is non-empty before the subset check.
+    patch_files = sorted(PATCHES_DIR.glob("*.patch"))
+    assert patch_files, f"no patch files found under {PATCHES_DIR}"
+
+    provided: set[str] = set()
+    for path in patch_files:
+        provided |= capabilities_added_by_patch(
+            path.read_text(encoding="utf-8", errors="replace")
+        )
+
+    missing = ADVERTISED_CAPABILITIES - provided
+    assert not missing, (
+        f"advertised capabilities with no patch provider: {sorted(missing)}"
+    )

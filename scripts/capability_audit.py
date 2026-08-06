@@ -46,6 +46,16 @@ def capabilities_added_by_patch(patch_text: str) -> set[str]:
 # Captured 2026-08-04 from the running 2026.07.3-r1 image. This is the contract
 # subarr negotiates against; anything else on an added line is a response field,
 # not a capability.
+#
+# There is a 17th audit-worthy capability, CUSTOM_REGROUP, which advertises no
+# flag at all -- patches 0001 and 0017 set it via `args['regroup'] = ...`, a
+# dict assignment this file's regex never matches by design. It is handled by
+# hand, not in this set.
+#
+# The test suite guards this set against DRIFT (a listed capability losing its
+# only patch provider) but not against GAPS: a brand-new capability a patch
+# adds that never gets added here. That direction still needs a human to
+# recapture the list from a live image.
 ADVERTISED_CAPABILITIES = frozenset(
     {
         "asr_arena",
