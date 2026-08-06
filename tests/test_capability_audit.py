@@ -5,6 +5,7 @@ from scripts.capability_audit import (
     ADVERTISED_CAPABILITIES,
     build_capability_map,
     capabilities_added_by_patch,
+    seams_for_patch,
 )
 
 PATCHES_DIR = Path(__file__).resolve().parent.parent / "patches"
@@ -112,3 +113,28 @@ def test_every_advertised_capability_is_provided_by_a_real_patch():
     assert not missing, (
         f"advertised capabilities with no patch provider: {sorted(missing)}"
     )
+
+
+HUNKS = """--- a/subgen.py
++++ b/subgen.py
+@@ -580,6 +580,7 @@ def queue_status():
++    x = 1
+@@ -700,3 +701,4 @@ async def asr(
++    y = 2
+@@ -900,1 +902,1 @@ class NewFileHandler(FileSystemEventHandler):
++    z = 3
+"""
+
+
+def test_extracts_function_names_from_hunk_headers():
+    assert seams_for_patch(HUNKS) == {"queue_status", "asr", "NewFileHandler"}
+
+
+def test_hunk_header_without_context_is_skipped():
+    # A hunk at file top has no enclosing symbol; it is not a seam.
+    assert seams_for_patch("@@ -1,4 +1,8 @@\n+x = 1\n") == set()
+
+
+def test_decorated_and_annotated_defs_are_handled():
+    body = "@@ -1,2 +1,3 @@ def gen_subtitles_queue(file_path: str, t: str) -> None:\n+pass\n"
+    assert seams_for_patch(body) == {"gen_subtitles_queue"}

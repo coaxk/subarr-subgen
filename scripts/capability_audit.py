@@ -90,3 +90,26 @@ def build_capability_map(patches: dict[str, str]) -> dict[str, list[str]]:
             if cap in ADVERTISED_CAPABILITIES:
                 out.setdefault(cap, []).append(name)
     return out
+
+
+# `@@ -a,b +c,d @@ <context>` -- git puts the enclosing def/class in <context>,
+# which is precisely "the symbol this hunk attaches to".
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\s*(?P<ctx>.*)$")
+_SYMBOL = re.compile(r"^(?:async\s+)?(?:def|class)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+
+
+def seams_for_patch(patch_text: str) -> set[str]:
+    """Upstream symbols this patch attaches to, from its hunk headers.
+
+    A hunk whose header carries no enclosing def/class (e.g. one at module top)
+    contributes no seam -- it anchors on file position, not on a symbol.
+    """
+    seams: set[str] = set()
+    for line in patch_text.splitlines():
+        m = _HUNK.match(line)
+        if not m:
+            continue
+        sym = _SYMBOL.match(m.group("ctx").strip())
+        if sym:
+            seams.add(sym.group("name"))
+    return seams
