@@ -25,12 +25,16 @@ def capabilities_added_by_patch(patch_text: str) -> set[str]:
     attributing those to the patch credits the wrong one -- verified during
     planning, where a naive scan credited 0010-queue-cancel with
     audio_language_override, which it merely sits below.
+
+    This matches any quoted snake_case key followed by a colon on an added
+    line, not just entries inside the capabilities dict -- it over-matches by
+    design, so callers must filter the result against the known capability
+    set rather than trusting it directly.
     """
     found: set[str] = set()
     for line in patch_text.splitlines():
         if not line.startswith("+") or line.startswith("+++"):
             continue
-        m = _CAP_ENTRY.search(line)
-        if m:
+        for m in _CAP_ENTRY.finditer(line):
             found.add(m.group("name"))
     return found

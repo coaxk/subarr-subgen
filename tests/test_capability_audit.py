@@ -29,3 +29,28 @@ def test_non_boolean_capability_values_still_count():
 def test_removal_lines_are_ignored():
     body = '--- a/s\n+++ b/s\n-                "old_flag": True,\n'
     assert capabilities_added_by_patch(body) == set()
+
+
+def test_multiple_capabilities_on_one_line():
+    # Regression test: patches/0029-async-config-switch.patch has an added line
+    # with two keys -- "state" and "model" -- and a naive .search() only ever
+    # returns the first, silently dropping the second.
+    body = '--- a/s\n+++ b/s\n+    "ignore_forced_subtitles": True, "runtime_config": True,\n'
+    assert capabilities_added_by_patch(body) == {
+        "ignore_forced_subtitles",
+        "runtime_config",
+    }
+
+
+def test_capabilities_accumulate_across_lines():
+    # Every other test in this file produces a set of size <= 1, which does not
+    # prove the set actually grows across multiple added lines.
+    body = (
+        "--- a/s\n+++ b/s\n"
+        '+            "forced_subtitle_detection": True,\n'
+        '+            "audio_language_override": True,\n'
+    )
+    assert capabilities_added_by_patch(body) == {
+        "forced_subtitle_detection",
+        "audio_language_override",
+    }
