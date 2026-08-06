@@ -135,6 +135,28 @@ def test_hunk_header_without_context_is_skipped():
     assert seams_for_patch("@@ -1,4 +1,8 @@\n+x = 1\n") == set()
 
 
-def test_decorated_and_annotated_defs_are_handled():
+def test_annotated_def_signature_is_handled():
+    # No decorator here on purpose -- a decorator can never appear in a hunk-
+    # header context under git's default funcname heuristic ("@" is not in
+    # [[:alpha:]$_], confirmed: 0 of 129 real headers match `@@ *@`). Do not
+    # widen _SYMBOL to accept "@app.get(...)" and start harvesting route
+    # paths as seams; there is nothing to widen it for.
     body = "@@ -1,2 +1,3 @@ def gen_subtitles_queue(file_path: str, t: str) -> None:\n+pass\n"
     assert seams_for_patch(body) == {"gen_subtitles_queue"}
+
+
+def test_nested_diff_marker_on_a_patched_line_is_not_a_hunk_header():
+    # A patch that ADDS or shows-as-context a line looking like a hunk header
+    # must not contribute a seam -- only column-0 `@@` is a real header.
+    body = (
+        "@@ -1,2 +1,3 @@ def real_seam():\n"
+        "+@@ -9,9 +9,9 @@ def added_phantom():\n"
+        " @@ -8,8 +8,8 @@ def context_phantom():\n"
+    )
+    assert seams_for_patch(body) == {"real_seam"}
+
+
+def test_single_line_hunk_header_without_counts():
+    assert seams_for_patch("@@ -5 +5 @@ def path_mapping(fullpath):\n+x\n") == {
+        "path_mapping"
+    }

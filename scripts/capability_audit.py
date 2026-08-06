@@ -92,17 +92,54 @@ def build_capability_map(patches: dict[str, str]) -> dict[str, list[str]]:
     return out
 
 
-# `@@ -a,b +c,d @@ <context>` -- git puts the enclosing def/class in <context>,
-# which is precisely "the symbol this hunk attaches to".
+# `@@ -a,b +c,d @@ <context>` -- git puts the NEAREST PRECEDING COLUMN-0 LINE in
+# <context>. upstream/ has no .gitattributes, so git falls back to its default
+# funcname heuristic (not the Python driver), which does not know a def body
+# from a module-level statement -- it just walks up to the last line starting
+# in column 0. Proof: real headers in patches/ carry contexts like
+# `subgen_version = '2026.06.4'`, `import requests`, and `try:`.
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\s*(?P<ctx>.*)$")
 _SYMBOL = re.compile(r"^(?:async\s+)?(?:def|class)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
 
 
 def seams_for_patch(patch_text: str) -> set[str]:
-    """Upstream symbols this patch attaches to, from its hunk headers.
+    """Hunk-header context names that look like a def/class signature.
 
-    A hunk whose header carries no enclosing def/class (e.g. one at module top)
-    contributes no seam -- it anchors on file position, not on a symbol.
+    These are NOT guaranteed upstream symbols. A hunk can attach to a
+    function/class our OWN earlier patch created, and it will still show up
+    here -- 4 of the seams this file extracts across patches/ (queue_status,
+    runtime_config, detect_language_robust, detect_language_robust_task) do
+    not exist in the pinned upstream base at all; queue_status is DEFINED by
+    0007-deduplicated-queue-type-tracking-and-queue-endpoint.patch. Callers
+    MUST intersect this function's output against the pinned base's real
+    symbol table before asking whether a branch still has them -- skipping
+    that step already produced one spurious veto, on runtime_config.
+
+    These are also NOT guaranteed attachment points, for the same funcname-
+    heuristic reason documented on _HUNK above: git reports the nearest
+    preceding column-0 line, which is not necessarily where the hunk's added
+    code actually lands. Concretely, 0007's queue-endpoint hunk carries the
+    header `@@ ... @@ def webui():`, but the diff context shows it sits right
+    below `def status():` and adds a brand-new `queue_status`, touching
+    neither webui nor status. webui, path_mapping, send_completion_webhook,
+    get_audio_languages, and subtitle_exists_in_language are real upstream
+    functions that never once have added code land inside their body across
+    the whole patch set -- every hunk naming them is this same proximity
+    artifact.
+
+    Finally, a seam name surviving unchanged on a branch is not evidence the
+    attachment survived: `args.update(kwargs)` appears 3 times in the pinned
+    base (inside asr_task_worker, detect_language_from_upload, gen_subtitles)
+    and 0 times on refactor/drop-stable-ts, while all three enclosing function
+    names are still present there. The name is not the seam; the code at the
+    name is the seam, and this function cannot see that far.
+
+    A hunk whose header's nearest column-0 line is not a def or class --
+    e.g. `subgen_version = '2026.06.4'`, `import requests`, `try:`, or a hunk
+    at the very top of the file with no preceding line at all -- contributes
+    no seam. That is 28 of 129 real hunk headers, 26 of them a module-level
+    statement rather than the file-top case; treat an empty return as "no
+    evidence found", not as "this patch is safely self-contained".
     """
     seams: set[str] = set()
     for line in patch_text.splitlines():
