@@ -1,5 +1,9 @@
 # tests/test_capability_audit.py
-from scripts.capability_audit import capabilities_added_by_patch
+from scripts.capability_audit import (
+    ADVERTISED_CAPABILITIES,
+    build_capability_map,
+    capabilities_added_by_patch,
+)
 
 PATCH_WITH_CONTEXT = """--- a/subgen.py
 +++ b/subgen.py
@@ -47,10 +51,37 @@ def test_capabilities_accumulate_across_lines():
     # prove the set actually grows across multiple added lines.
     body = (
         "--- a/s\n+++ b/s\n"
-        '+            "forced_subtitle_detection": True,\n'
+        '+            "detect_language_track": True,\n'
         '+            "audio_language_override": True,\n'
     )
     assert capabilities_added_by_patch(body) == {
-        "forced_subtitle_detection",
+        "detect_language_track",
         "audio_language_override",
     }
+
+
+def test_advertised_list_is_the_sixteen_live_flags():
+    assert len(ADVERTISED_CAPABILITIES) == 16
+    assert "per_request_kwargs" in ADVERTISED_CAPABILITIES
+    assert "asr_arena" in ADVERTISED_CAPABILITIES
+    assert "runtime_config" in ADVERTISED_CAPABILITIES
+    # Response fields must NOT be treated as capabilities.
+    assert "queued_count" not in ADVERTISED_CAPABILITIES
+    assert "ok" not in ADVERTISED_CAPABILITIES
+
+
+def test_map_drops_non_capability_keys():
+    patches = {
+        "0007-queue.patch": '+                "queued_count": len(q),\n',
+        "0010-queue-cancel.patch": '+                "queue_cancel": True,\n',
+    }
+    m = build_capability_map(patches)
+    assert m == {"queue_cancel": ["0010-queue-cancel.patch"]}
+
+
+def test_map_records_every_provider_for_a_capability():
+    patches = {
+        "a.patch": '+                "runtime_config": True,\n',
+        "b.patch": '+                "runtime_config": True,\n',
+    }
+    assert build_capability_map(patches)["runtime_config"] == ["a.patch", "b.patch"]

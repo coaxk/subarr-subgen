@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import re
 
-# Matches a capability entry in the /queue capabilities dict. The value may be
+# Matches any quoted snake_case key followed by a colon on an added line --
+# not just entries inside the /queue capabilities dict. The value may be
 # True, an int, or an expression -- concurrent_transcriptions is an int -- so the
-# value side is deliberately not constrained.
+# value side is deliberately not constrained. Callers must filter the result
+# against ADVERTISED_CAPABILITIES; see capabilities_added_by_patch below.
 _CAP_ENTRY = re.compile(r'"(?P<name>[a-z][a-z0-9_]*)"\s*:')
 
 
@@ -38,3 +40,43 @@ def capabilities_added_by_patch(patch_text: str) -> set[str]:
         for m in _CAP_ENTRY.finditer(line):
             found.add(m.group("name"))
     return found
+
+
+# The 16 flags a live patched subgen advertises under /queue -> capabilities.
+# Captured 2026-08-04 from the running 2026.07.3-r1 image. This is the contract
+# subarr negotiates against; anything else on an added line is a response field,
+# not a capability.
+ADVERTISED_CAPABILITIES = frozenset(
+    {
+        "asr_arena",
+        "asr_detected_language",
+        "asr_vanilla_base",
+        "async_config",
+        "audio_language_override",
+        "concurrent_transcriptions",
+        "curated_language_prompts",
+        "detect_language_track",
+        "ignore_forced_subtitles",
+        "per_request_kwargs",
+        "per_request_task",
+        "queue_cancel",
+        "request_ignore_forced",
+        "robust_language_detection",
+        "runtime_config",
+        "safe_decode_preset",
+    }
+)
+
+
+def build_capability_map(patches: dict[str, str]) -> dict[str, list[str]]:
+    """capability -> sorted list of patch filenames that add it.
+
+    ``patches`` maps patch filename to its text. Capabilities not in
+    ADVERTISED_CAPABILITIES are dropped: they are response fields, not contract.
+    """
+    out: dict[str, list[str]] = {}
+    for name in sorted(patches):
+        for cap in capabilities_added_by_patch(patches[name]):
+            if cap in ADVERTISED_CAPABILITIES:
+                out.setdefault(cap, []).append(name)
+    return out
