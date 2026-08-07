@@ -666,7 +666,14 @@ def main() -> int:
     manual = ""
     if out_path.exists():
         manual = preserve_manual_section(out_path.read_text(encoding="utf-8"))
-    out_path.write_text(report + ("\n" + manual if manual else ""), encoding="utf-8")
+    # newline="\n" is not cosmetic. Without it, write_text translates to the
+    # platform ending, so regenerating on Windows rewrites all 281 lines as
+    # CRLF against an LF-committed file. Every re-run would then diff as a
+    # total rewrite, burying the one line that actually changed -- and this
+    # audit exists to be re-run when the branch moves.
+    out_path.write_text(
+        report + ("\n" + manual if manual else ""), encoding="utf-8", newline="\n"
+    )
     kept = (
         f", preserved {manual.count(chr(10)) + 1} lines of manual pass"
         if manual
