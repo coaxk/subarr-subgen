@@ -130,3 +130,153 @@ Every hunk in `patches/`, including patches that map to no advertised capability
 | `0035-bump-patch-rev-v4.20.patch` | 1 | INCONCLUSIVE 1 |
 | `0036-bump-patch-rev-v4.21.patch` | 1 | INCONCLUSIVE 1 |
 
+
+## Manual pass
+
+The probe judges hunks. It cannot judge whether a *mechanism* has somewhere left to attach, and 86 of 129 hunks came back INCONCLUSIVE, so the machine result is a lower bound on damage and says nothing at all about repair cost. This section opens the branch code for the three veto capabilities plus `CUSTOM_REGROUP` and assigns NATIVE / PORTABLE / GONE by reading, not by counting.
+
+One external fact is load-bearing throughout, and it was measured rather than assumed. Both transcribe backends were interrogated inside the live `subgen-next` container:
+
+- base loads `stable_whisper.load_faster_whisper(...)` (base `subgen.py:1453`). stable-ts **2.19.1**'s transcribe wrapper ends in `**options`, an open tail, so `args.update(kwargs)` could deliver *any* key.
+- the branch loads `faster_whisper.WhisperModel(...)` directly (branch `subgen.py:1760`). faster-whisper **1.2.1**'s `WhisperModel.transcribe` reports `has **kwargs: False`.
+
+Probing 18 stable-ts-only keys and 19 faster-whisper decoding knobs against that signature:
+
+```
+stable-ts-only keys REJECTED by fw: ['check_sorted', 'demucs', 'denoiser', 'input_sr', 'k_size',
+  'min_word_dur', 'nonspeech_error', 'only_ffmpeg', 'only_voice_freq', 'progress_callback',
+  'q_levels', 'regroup', 'suppress_silence', 'suppress_word_ts', 'use_word_position', 'vad',
+  'vad_threshold', 'verbose']
+stable-ts keys fw also accepts: []
+arena-style knobs fw accepts: ['beam_size', 'best_of', 'chunk_length',
+  'compression_ratio_threshold', 'condition_on_previous_text', 'hallucination_silence_threshold',
+  'hotwords', 'initial_prompt', 'length_penalty', 'log_prob_threshold', 'max_new_tokens',
+  'no_repeat_ngram_size', 'no_speech_threshold', 'patience', 'prompt_reset_on_temperature',
+  'repetition_penalty', 'suppress_tokens', 'temperature', 'vad_parameters']
+arena-style knobs fw rejects: []
+```
+
+So the kwargs channel does not vanish. It **narrows**, cleanly, along the stable-ts boundary: every decoding knob survives, every stable-ts-only knob dies.
+
+### `per_request_kwargs` - PORTABLE
+
+**Probe said:** `0014-per-request-kwargs.patch` itself scored INTACT 2, INCONCLUSIVE 8, so no direct breaks. The damage is in its plumbing dependency `0001-per-language-kwargs.patch`, which lost 3 of its 4 hunks (BROKEN_BY_BRANCH at `asr_task_worker`, `detect_language_from_upload` and `gen_subtitles`), and in the established `args.update(kwargs)` count going from 3 to 0.
+
+**Read:** branch `asr_task_worker` in full (1191-1291), branch `gen_subtitles` in full (1881-1964), `_STABLE_TS_KWARGS` (677), `/batch` (861-866), `transcribe_existing` (2858), `gen_subtitles_queue` (2221-2257), the transcribe dispatch inside `transcription_worker` (386), `start_model` (1751-1760). For comparison, base `asr_task_worker` (1069-1090) and base `gen_subtitles` (1594-1603).
+
+**Found:** the merge point survives, renamed and re-shaped. Base built a local `args = {}`, layered global then per-language kwargs into it, and splatted `**args`. The branch builds
+
+```python
+fw_kwargs = {k: v for k, v in kwargs.items() if k not in _STABLE_TS_KWARGS}
+```
+
+at 1219 and 1917, in the same position, immediately before `model.transcribe`. It is a plain mutable dict. `fw_kwargs.update(kwargs_override)` is a legal statement in exactly the place `args.update(kwargs_override)` used to occupy.
+
+More importantly, the whole *delivery chain* patch 0014 rides is upstream code and completely intact on the branch: `/batch` (861) to `transcribe_existing` (2858) to `gen_subtitles_queue(**task_kwargs)` (2221) to `task.update(task_kwargs)` (2255) to the worker dispatch (386) to `gen_subtitles`. The `**task_kwargs` parameter and the `task.update` call are upstream code, not ours, and the branch left them alone. 0014's own additions to that chain are all signature and call-site parameters, which is why the patch shows zero breaks of its own.
+
+Two real costs, both measured rather than inferred:
+
+1. **The knob surface narrows** to the faster-whisper table quoted above. The arena's `ConfigVariant.kwargs` (subarr `src/subarr/arena.py:120`) is an open `dict[str, Any]`, so nothing in subarr constrains what gets sent; what changed is what the receiver will tolerate.
+
+2. **Five keys now collide.** The branch hard-codes `word_timestamps=True`, `vad_filter=vad_filter` and `condition_on_previous_text=False` *outside* the splat (1231-1234 and 1923-1926), alongside `task=` and `language=`. Any override carrying one of those five raises `TypeError: got multiple values for keyword argument`. Verified against the real signature:
+
+   ```
+   TypeError {'condition_on_previous_text': False, 'beam_size': 1} -> got multiple values for keyword argument 'condition_on_previous_text'
+   OK        {'beam_size': 1}
+   ```
+
+   This is not hypothetical for us: our shipped safe-decode preset (`0013`) injects `condition_on_previous_text: False` into the global `kwargs` dict, so it would crash every transcribe on the branch as written. It is also a latent upstream bug for any vanilla user running `SUBGEN_KWARGS={"vad_filter": true}`.
+
+**Verdict:** PORTABLE, and specifically a **real rewrite** rather than a context re-port, though a small and bounded one at two call sites. The fix is to seed the base dict and let the merges win instead of splatting into fixed keywords:
+
+```python
+fw_kwargs = {'word_timestamps': True, 'vad_filter': vad_filter, 'condition_on_previous_text': False}
+fw_kwargs.update({k: v for k, v in kwargs.items() if k not in _STABLE_TS_KWARGS})
+# ... per-language layer ...
+if kwargs_override:
+    fw_kwargs.update({k: v for k, v in kwargs_override.items() if k not in _STABLE_TS_KWARGS})
+fw_segments_gen, info = model.transcribe(audio, task=task, language=language or None, **fw_kwargs)
+```
+
+The mechanism survives; its reach shrinks to the decoding surface. That is a Phase 2 input, not a veto.
+
+### `asr_arena` - PORTABLE
+
+**Probe said:** INTACT 6, BROKEN_BY_BRANCH 1, INCONCLUSIVE 3. The single break is `@@ -1315,17 +1354,23 @@ def asr_task_worker`, the audio-source block.
+
+**Read:** branch `/asr` in full (872-986), `generate_audio_hash` (270-292), `asr_task_worker` (1191-1291), plus the faster-whisper signature above.
+
+**Found:** the `/asr` endpoint on the branch is functionally the base endpoint, untouched by the refactor. Upload-only, blocking via `TaskResult`, dedup by content hash, `StreamingResponse` return, same `finally` cleanup. That is why 6 of 0016's hunks came back INTACT: they add query parameters (`path`, `kwargs`) and task_data keys (`audio_path`, `kwargs_override`) to code that still exists verbatim. `generate_audio_hash` (270) is unchanged, so folding kwargs into the dedup hash is still a pure addition.
+
+The one break is the block base wrote as `args['audio'] = ...`. The branch replaced it with
+
+```python
+if encode:
+    audio = io.BytesIO(file_content)
+else:
+    audio = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
+```
+
+at 1222-1225. Path-input re-ports to `audio = audio_path`, because faster-whisper accepts `audio: Union[str, BinaryIO, numpy.ndarray]`: a bare path string is a first-class input, so the `?path=` half of the arena gets *simpler*, not harder. One new wrinkle: in path mode `file_content` is `None`, and the branch's whispercpp arm at 1215-1216 wants bytes, so that arm needs a read-from-path guard that did not previously exist.
+
+**Verdict:** PORTABLE. The endpoint half is a plain context re-port. The worker half is the same small rewrite already described for `per_request_kwargs`, plus a three-line audio-source branch. The narrowed knob surface applies here too, and it is the same narrowing, not an additional one.
+
+### `runtime_config` - PORTABLE
+
+**Probe said:** INTACT 1, INCONCLUSIVE 3.
+
+**Read:** branch `start_model` (1751-1760), `perform_model_cleanup` (1786-1820), `delete_model` (1824-1841), the module-level task counters (232-233), the config globals (141), the import block (45-77), `status()` (703-708).
+
+**Found:** the endpoint body is new module-level code, so there is nothing upstream for the branch to break in it. Everything it *reads* survives, with two exceptions.
+
+Survives: `whisper_model` and `compute_type` are still the globals `start_model` feeds to the model constructor (141, 1760); the `model.model.unload_model()` release idiom is preserved verbatim at 1800, because faster-whisper's `WhisperModel` exposes the same inner `.model`; `active_direct_tasks` and `active_direct_tasks_lock` are at 232-233; `task_queue.is_idle()` is at 336; `gc` is imported at 49; `Query` is imported at 74. The busy-check contract that mirrors `perform_model_cleanup` is therefore intact.
+
+Gone: **`JSONResponse` is not imported**. Branch line 74 is `from fastapi.responses import StreamingResponse` with no second name, which is precisely break `0006`. And **`torch` is no longer a module-level import**: base had `import torch` at line 71, the branch has zero module-level torch and only a guarded local `import torch` inside `perform_model_cleanup` (1809-1810). So `runtime_config`'s `if torch.cuda.is_available():` would raise `NameError` on the branch.
+
+**Verdict:** PORTABLE, a **context re-port**, two lines. Restore the `JSONResponse` import and mirror the branch's guarded local torch import. If anything the endpoint is *more* correct against this branch: its `_ALLOWED_RUNTIME_MODELS` allow-list holds faster-whisper model names, and `start_model` now instantiates faster-whisper directly.
+
+### `CUSTOM_REGROUP` - GONE
+
+**Probe said:** nothing. It advertises no capability flag, so no row derives it; it is hard-coded into this report so it cannot be lost by omission.
+
+**Read:** whole-file grep for `regroup|REGROUP` on both trees; branch 528, 677, 145-147, 586-651; base 146, 1080-1081, 1598-1599.
+
+**Found:** base reads `custom_regroup = os.getenv('CUSTOM_REGROUP', 'cm_sl=84_sl=42++++++1')` at line 146 and applies it at both transcribe sites (1080-1081, 1598-1599). On the branch, `CUSTOM_REGROUP` does not appear anywhere in the file. `regroup` survives in exactly two places, neither executing: a comment at 528 and the strip-list at 677. Both call sites use that strip-list to filter the key out *before* `**fw_kwargs` is splatted, so it is not merely unused, it is deliberately excluded. The receiving library would reject it regardless, since `regroup` is in the measured list of 18 keys faster-whisper 1.2.1 refuses.
+
+What took its place is not a regroup port. The branch ships a hand-written segmenter (`_find_line_split` 586, `_format_subtitle` 604, `split_segments` 617, described in-code as Netflix-style guidelines ported from bazarr-openai-whisperbridge) driven by three new environment knobs at 145-147: `MAX_LINE_LENGTH` (42), `GAP_SPLIT_SECS` (0.4), `MAX_SEGMENT_SECS` (5.0). Different lever, different units, no translation path from a regroup expression.
+
+**Verdict:** GONE. The DSL, its interpreter and its host library are all absent, so this is not re-portable at any price. Per the standing rule it does **not** trigger the veto: the #359 retimer (subarr `src/subarr/subtitle_retime.py`, which operates purely on cue timestamps and is explicitly documented as base-agnostic) was specified as the #171-immune replacement lever and shipped in 2.4.0. Whether it suffices alone is exactly the arm 2 versus arm 3 post-retime comparison in Phase 2.
+
+### Non-capability breaks (`0006`, `0007`, `0008`, `0009`) - ordinary context drift
+
+All four are drift. None is structural.
+
+- **`0006`**: the line being edited, `from fastapi.responses import StreamingResponse`, still exists at branch 74. Only the surrounding context lines (`import stable_whisper`, `import torch`, `from stable_whisper import Segment`) are gone. Re-anchor.
+- **`0007`**: the `/queue` endpoint is additive module-level code. It broke only because its anchor, `status()`, changed body: branch 703-708 now branches on `whispercpp` and drops the stable-ts version string. Re-anchor.
+- **`0008`**: both edited log lines still exist verbatim (branch 1437 and 1524). Only the line above them changed, from `result = model.transcribe(...)` plus `result.language` to `lang_code, _prob = model.detect_language(audio)`. This capability gets *easier* on the branch: the probability is now a bound local, so the `getattr(result, 'language_probability', None)` fallback becomes a direct read of `_prob`.
+- **`0009`**: the first hunk is the file header and broke on `subgen_version = '2026.07.3'` against the branch's `'2026.08.18'`. A version-string bump we redo on every sync.
+
+## Verdict: the veto does NOT fire, Phase 2 proceeds
+
+All three veto capabilities are **PORTABLE**.
+
+| Capability | Verdict | Cost |
+| --- | --- | --- |
+| `per_request_kwargs` | PORTABLE | small real rewrite, 2 call sites |
+| `asr_arena` | PORTABLE | same rewrite plus a 3-line audio-source branch |
+| `runtime_config` | PORTABLE | context re-port, 2 lines |
+| `CUSTOM_REGROUP` | GONE | not re-portable; by rule, does not veto |
+
+The veto rule protects the *mechanism* behind the ASR arena, the Tuning Lab and the #124 federated direction. That mechanism is a caller-supplied dict reaching `model.transcribe` through the `/batch` and `/asr` request paths. Reading the branch, every link in that chain is present:
+
+- the request surfaces (`/batch` 861, `/asr` 872) are unrefactored and take additive query parameters;
+- the queue plumbing (`gen_subtitles_queue(**task_kwargs)` 2221, `task.update(task_kwargs)` 2255) is upstream code the branch did not touch;
+- the merge dict still exists at both transcribe sites, as `fw_kwargs` (1219, 1917), in the same position `args` occupied;
+- `runtime_config` reads only state the branch preserved, bar two importable names.
+
+What is genuinely lost is not the mechanism but part of its **reach**: the stable-ts-only knob set, measured as 18 of 18 sampled keys now rejected by faster-whisper 1.2.1's closed signature, against 19 of 19 decoding knobs still accepted. The arena can no longer trial `suppress_silence`, `denoiser`, `vad_threshold`, `min_word_dur` or `regroup`; it can still trial `beam_size`, `temperature`, `no_speech_threshold`, `condition_on_previous_text`, `vad_parameters`, `hotwords` and the rest of the decoder. A narrower search space is a Phase 2 measurement input, not a stop condition.
+
+Two findings should be carried into Phase 2 as work items rather than buried here:
+
+1. **The five-key collision is a blocker for the port and a live bug for upstream.** `word_timestamps`, `vad_filter`, `condition_on_previous_text`, `task` and `language` are passed as fixed keywords beside `**fw_kwargs`, so any of them arriving in `SUBGEN_KWARGS` raises `TypeError` today, with or without our patches. Our `0013` safe-decode preset sets one of them. This is a candidate upstream contribution in the same shape as the `SKIP_STARTUP_SCAN` fix.
+2. **The INCONCLUSIVE 86 are still unresolved.** This manual pass covers only the four items that could have stopped Phase 2. It does not clear the remaining hunks, which need the cumulative-apply run.
