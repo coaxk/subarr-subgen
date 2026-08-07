@@ -10,6 +10,7 @@ from scripts.capability_audit import (
     classify_hunk,
     hunk_as_patch,
     hunks_of,
+    preserve_manual_section,
     render_report,
     seams_for_patch,
 )
@@ -316,3 +317,20 @@ def test_report_states_that_inconclusive_was_not_counted_as_breakage():
     out = render_report([], branch_sha="deadbee")
     assert "INCONCLUSIVE" in out
     assert "lower bound" in out.lower()
+
+
+def test_preserve_manual_section_returns_the_hand_written_tail():
+    existing = "# report\n\nmachine stuff\n\n## Manual pass\n\n### `x` - GONE\n"
+    assert preserve_manual_section(existing) == "## Manual pass\n\n### `x` - GONE\n"
+
+
+def test_preserve_manual_section_is_empty_when_there_is_none():
+    assert preserve_manual_section("# report\n\nmachine stuff only\n") == ""
+
+
+def test_preserve_manual_section_survives_a_round_trip():
+    # Regeneration must be idempotent: the preserved tail has to itself be
+    # preservable, or the SECOND re-run silently loses what the first kept.
+    existing = "# old machine output\n## Manual pass\n\nanalysis\n"
+    kept = preserve_manual_section(existing)
+    assert preserve_manual_section("# new machine output\n" + kept) == kept
