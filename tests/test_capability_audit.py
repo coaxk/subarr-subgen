@@ -4,10 +4,13 @@ from pathlib import Path
 from scripts.capability_audit import (
     ADVERTISED_CAPABILITIES,
     Hunk,
+    HunkOutcome,
     build_capability_map,
     capabilities_added_by_patch,
+    classify_hunk,
     hunk_as_patch,
     hunks_of,
+    render_report,
     seams_for_patch,
 )
 
@@ -250,3 +253,66 @@ def test_hunk_with_overrunning_counts_stops_at_the_next_header():
     assert len(hs) == 2
     assert hs[0].body == " ctx\n"
     assert hs[1].body == "-old\n+new\n"
+
+
+def test_hunk_applying_to_both_is_intact():
+    assert classify_hunk(True, True) is HunkOutcome.INTACT
+
+
+def test_hunk_applying_to_base_but_not_branch_is_broken():
+    assert classify_hunk(True, False) is HunkOutcome.BROKEN_BY_BRANCH
+
+
+def test_hunk_failing_on_base_is_inconclusive_whatever_the_branch_says():
+    # Failing on base means the probe cannot see this hunk standalone -- it
+    # depends on earlier patches in the stack. That is not evidence of breakage
+    # in EITHER direction, so both branch results collapse to INCONCLUSIVE.
+    assert classify_hunk(False, False) is HunkOutcome.INCONCLUSIVE
+    assert classify_hunk(False, True) is HunkOutcome.INCONCLUSIVE
+
+
+def test_report_names_broken_hunks_and_carries_the_sha():
+    rows = [
+        (
+            "asr_arena",
+            ["0016.patch"],
+            {HunkOutcome.BROKEN_BY_BRANCH: 2, HunkOutcome.INCONCLUSIVE: 3},
+            ["@@ -1,2 +1,2 @@ def asr_task_worker(task_data: dict) -> None:"],
+        ),
+        ("queue_cancel", ["0010.patch"], {HunkOutcome.INTACT: 1}, []),
+    ]
+    out = render_report(rows, branch_sha="7997624")
+    assert "asr_arena" in out and "queue_cancel" in out
+    assert "7997624" in out
+    assert "asr_task_worker" in out  # the specific broken hunk must be named
+
+
+def test_report_names_broken_hunks_no_capability_row_can_reach():
+    # 7 of the 11 real breaks live in patches that add no capability literal,
+    # so build_capability_map gives them no row and the per-capability section
+    # cannot name them -- including the args.update(kwargs) triple, the most
+    # load-bearing break in the stack. Without a stack-wide list the report
+    # hides its own best evidence, which is caveat 2 biting the report itself.
+    orphan = Hunk(
+        "0001-per-language-kwargs.patch",
+        "subgen.py",
+        "@@ -1595,6 +1628,16 @@ def gen_subtitles(file_path: str) -> None:\n",
+        "+    args.update(kwargs)\n",
+    )
+    out = render_report([], branch_sha="deadbee", broken=[orphan])
+    assert "gen_subtitles" in out
+    assert "0001-per-language-kwargs.patch" in out
+
+
+def test_report_always_carries_the_custom_regroup_row():
+    # CUSTOM_REGROUP advertises no flag, so nothing derives it -- yet it is the
+    # one genuine seam loss. A report that can omit it is worthless.
+    out = render_report([], branch_sha="deadbee")
+    assert "CUSTOM_REGROUP" in out
+    assert "GONE" in out
+
+
+def test_report_states_that_inconclusive_was_not_counted_as_breakage():
+    out = render_report([], branch_sha="deadbee")
+    assert "INCONCLUSIVE" in out
+    assert "lower bound" in out.lower()
