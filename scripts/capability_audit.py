@@ -11,6 +11,7 @@ in the subarr repo.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 # Matches any quoted snake_case key followed by a colon on an added line --
 # not just entries inside the /queue capabilities dict. The value may be
@@ -150,3 +151,79 @@ def seams_for_patch(patch_text: str) -> set[str]:
         if sym:
             seams.add(sym.group("name"))
     return seams
+
+
+# A hunk header declares how many lines it covers on each side. Parsing those
+# counts is what lets us bound the body exactly, instead of guessing that the
+# body ends at the next line that happens to look like a header -- a removed
+# line beginning "--" renders as "---" and would fool a naive boundary scan.
+# Both counts are optional: `@@ -5 +5 @@` means one line each side.
+_HUNK_COUNTS = re.compile(r"^@@ -\d+(?:,(?P<old>\d+))? \+\d+(?:,(?P<new>\d+))? @@")
+
+
+class Hunk(NamedTuple):
+    """One individually-appliable hunk, with enough provenance to report it."""
+
+    patch: str  # patch filename it came from
+    file: str  # target path, e.g. "subgen.py"
+    header: str  # the @@ line, newline-terminated
+    body: str  # the hunk body, newline-terminated
+
+
+def hunks_of(patch_name: str, patch_text: str) -> list[Hunk]:
+    """Split a patch into hunks that can each be applied on their own.
+
+    Tracks the target file from `+++ b/<path>` so a multi-file patch does not
+    attribute hunks to the wrong file -- 0021 touches entrypoint.sh, and
+    probing that against subgen.py would be a category error.
+    """
+    hunks: list[Hunk] = []
+    cur_file = ""
+    lines = patch_text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("+++ "):
+            cur_file = line[4:].strip()
+            if cur_file.startswith("b/"):
+                cur_file = cur_file[2:]
+            i += 1
+            continue
+        m = _HUNK_COUNTS.match(line)
+        if not m:
+            i += 1
+            continue
+        old_left = int(m.group("old")) if m.group("old") is not None else 1
+        new_left = int(m.group("new")) if m.group("new") is not None else 1
+        body: list[str] = []
+        i += 1
+        while i < len(lines) and (old_left > 0 or new_left > 0):
+            b = lines[i]
+            # A genuine next hunk header always starts at column 0 with "@@" --
+            # every real body line starts with " ", "+", "-", or "\" instead, so
+            # this can never misfire on content. It is the backstop for a hunk
+            # whose declared counts overrun its actual body (fuzzy/hand-edited
+            # patches): without it, unresolved counts would walk straight
+            # through the next hunk's header and swallow it as bogus context.
+            if _HUNK_COUNTS.match(b):
+                break
+            if b.startswith("\\"):  # "\ No newline at end of file"
+                body.append(b)
+                i += 1
+                continue
+            if b.startswith("-"):
+                old_left -= 1
+            elif b.startswith("+"):
+                new_left -= 1
+            else:  # context line counts against both sides
+                old_left -= 1
+                new_left -= 1
+            body.append(b)
+            i += 1
+        hunks.append(Hunk(patch_name, cur_file, line, "".join(body)))
+    return hunks
+
+
+def hunk_as_patch(h: Hunk) -> str:
+    """Reconstruct a standalone patch `git apply` will accept for one hunk."""
+    return f"--- a/{h.file}\n+++ b/{h.file}\n{h.header}{h.body}"
