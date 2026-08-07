@@ -168,7 +168,7 @@ def test_single_line_hunk_header_without_counts():
 TWO_HUNKS = (
     "--- a/subgen.py\n"
     "+++ b/subgen.py\n"
-    "@@ -10,3 +10,4 @@ def alpha():\n"
+    "@@ -10,2 +10,3 @@ def alpha():\n"
     "     keep\n"
     "-    drop\n"
     "+    add1\n"
@@ -183,7 +183,7 @@ TWO_HUNKS = (
 def test_splits_into_one_hunk_per_header():
     hs = hunks_of("0001-x.patch", TWO_HUNKS)
     assert [h.header.strip() for h in hs] == [
-        "@@ -10,3 +10,4 @@ def alpha():",
+        "@@ -10,2 +10,3 @@ def alpha():",
         "@@ -50,2 +51,2 @@ def beta():",
     ]
     assert all(h.patch == "0001-x.patch" for h in hs)
@@ -231,3 +231,22 @@ def test_hunk_is_hashable_and_carries_its_provenance():
     assert isinstance(h, Hunk)
     assert {h}  # must be usable in a set
     assert h.patch == "0016-asr.patch"
+
+
+def test_hunk_with_overrunning_counts_stops_at_the_next_header():
+    # A hand-edited or fuzzy patch can declare more lines than it supplies.
+    # Without a backstop the unresolved counts walk through the next hunk's
+    # header and swallow it, losing that hunk entirely.
+    text = (
+        "--- a/s.py\n"
+        "+++ b/s.py\n"
+        "@@ -10,9 +10,9 @@ def alpha():\n"
+        " ctx\n"
+        "@@ -50,1 +50,1 @@ def beta():\n"
+        "-old\n"
+        "+new\n"
+    )
+    hs = hunks_of("p", text)
+    assert len(hs) == 2
+    assert hs[0].body == " ctx\n"
+    assert hs[1].body == "-old\n+new\n"

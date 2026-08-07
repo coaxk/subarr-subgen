@@ -205,6 +205,14 @@ def hunks_of(patch_name: str, patch_text: str) -> list[Hunk]:
             # whose declared counts overrun its actual body (fuzzy/hand-edited
             # patches): without it, unresolved counts would walk straight
             # through the next hunk's header and swallow it as bogus context.
+            #
+            # This backstop does NOT catch an overrun into a "--- a/<file>" /
+            # "+++ b/<file>" pair -- those start with "-"/"+" and get consumed
+            # as ordinary content lines, so in a multi-file patch the following
+            # hunks would be mis-attributed to the wrong target file. Not
+            # handled: all 129 hunks in patches/ have exact counts (confirmed
+            # by the 129-hunk, correctly-per-file real-patch run), so this
+            # cannot happen on our current patch stack.
             if _HUNK_COUNTS.match(b):
                 break
             if b.startswith("\\"):  # "\ No newline at end of file"
