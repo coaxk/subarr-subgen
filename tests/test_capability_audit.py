@@ -7,9 +7,11 @@ from scripts.capability_audit import (
     HunkOutcome,
     build_capability_map,
     capabilities_added_by_patch,
+    classify_cumulative,
     classify_hunk,
     hunk_as_patch,
     hunks_of,
+    patches_in_series_order,
     preserve_manual_section,
     render_report,
     seams_for_patch,
@@ -272,12 +274,109 @@ def test_hunk_failing_on_base_is_inconclusive_whatever_the_branch_says():
     assert classify_hunk(False, True) is HunkOutcome.INCONCLUSIVE
 
 
+# ---------------------------------------------------------------------------
+# The cross-tabulation. classify_hunk above reads ONE probe; these read both.
+# ---------------------------------------------------------------------------
+
+
+def test_cumulative_base_failure_is_a_base_anomaly():
+    # The stack applies to the pinned base 129/129 in series order, so a
+    # cumulative-base failure means the TOOL is broken, not the branch. It
+    # therefore outranks every other signal in the row, including a
+    # decisive-looking standalone break: once the base pass has failed, nothing
+    # else in that row is trustworthy enough to report as a finding.
+    assert classify_cumulative(True, True, False, True) is HunkOutcome.BASE_ANOMALY
+    assert classify_cumulative(True, False, False, True) is HunkOutcome.BASE_ANOMALY
+    assert classify_cumulative(False, False, False, False) is HunkOutcome.BASE_ANOMALY
+
+
+def test_standalone_break_is_decisive_whatever_the_cumulative_probe_says():
+    # Applies standalone to the pinned base and not to the branch => the branch
+    # removed upstream text this hunk lands on. Ordering cannot explain that
+    # away, so it stays BROKEN_BY_BRANCH even if the cumulative branch pass
+    # happens to accept it at an offset.
+    assert classify_cumulative(True, False, True, False) is HunkOutcome.BROKEN_BY_BRANCH
+    assert classify_cumulative(True, False, True, True) is HunkOutcome.BROKEN_BY_BRANCH
+
+
+def test_cumulative_branch_success_is_intact():
+    assert classify_cumulative(True, True, True, True) is HunkOutcome.INTACT
+    # The resolution that matters: standalone could not judge this hunk at all,
+    # because its anchor is text an EARLIER patch of ours creates and a
+    # pristine tree never has it. The cumulative pass supplies that anchor and
+    # the hunk still lands on the branch.
+    assert classify_cumulative(False, False, True, True) is HunkOutcome.INTACT
+    assert classify_cumulative(False, True, True, True) is HunkOutcome.INTACT
+
+
+def test_hunk_an_earlier_break_took_is_cascade():
+    # No standalone verdict, and cumulatively it does not land on the branch:
+    # the anchor it needed was one of OUR added lines, and the hunk that adds
+    # it failed earlier in the series. Attributable to that break, not
+    # independent evidence of damage.
+    assert classify_cumulative(False, False, True, False) is HunkOutcome.CASCADE
+    assert classify_cumulative(False, True, True, False) is HunkOutcome.CASCADE
+    # Even a hunk that applies standalone to BOTH trees cascades when an
+    # earlier break has already moved the ground under it.
+    assert classify_cumulative(True, True, True, False) is HunkOutcome.CASCADE
+
+
+def test_cumulative_outcomes_are_their_own_members():
+    # StrEnum members compare equal to their value, so a typo'd alias would
+    # pass an `is` check against the wrong member without this.
+    assert HunkOutcome.CASCADE.value == "CASCADE"
+    assert HunkOutcome.BASE_ANOMALY.value == "BASE_ANOMALY"
+    assert len({HunkOutcome.CASCADE, HunkOutcome.BASE_ANOMALY, HunkOutcome.INTACT}) == 3
+
+
+SERIES_TEXT = """# Patch application order -- quilt-style.
+#
+# Smallest, most-isolated patch first.
+
+0001-a.patch
+0002-b.patch
+
+  0003-c.patch
+"""
+
+
+def test_series_order_skips_comments_and_blank_lines():
+    assert patches_in_series_order(SERIES_TEXT) == [
+        "0001-a.patch",
+        "0002-b.patch",
+        "0003-c.patch",
+    ]
+
+
+def test_series_order_is_file_order_not_sorted_order():
+    # The cumulative probe mutates one tree in this order, so the order IS the
+    # semantics. Sorting it would be a different experiment.
+    assert patches_in_series_order("0009-b.patch\n0001-a.patch\n") == [
+        "0009-b.patch",
+        "0001-a.patch",
+    ]
+
+
+def test_series_lists_exactly_the_patch_files_on_disk():
+    # A patch file missing from `series` is never applied to the cumulative
+    # tree, so every later hunk that needs its added lines fails and is scored
+    # CASCADE -- damage manufactured by a bookkeeping slip. A series entry with
+    # no file on disk is the same slip in the other direction. Both directions
+    # must fail loudly.
+    on_disk = {p.name for p in PATCHES_DIR.glob("*.patch")}
+    assert on_disk, f"no patch files found under {PATCHES_DIR}"
+    listed = set(
+        patches_in_series_order((PATCHES_DIR / "series").read_text(encoding="utf-8"))
+    )
+    assert listed == on_disk
+
+
 def test_report_names_broken_hunks_and_carries_the_sha():
     rows = [
         (
             "asr_arena",
             ["0016.patch"],
-            {HunkOutcome.BROKEN_BY_BRANCH: 2, HunkOutcome.INCONCLUSIVE: 3},
+            {HunkOutcome.BROKEN_BY_BRANCH: 2, HunkOutcome.CASCADE: 3},
             ["@@ -1,2 +1,2 @@ def asr_task_worker(task_data: dict) -> None:"],
         ),
         ("queue_cancel", ["0010.patch"], {HunkOutcome.INTACT: 1}, []),
@@ -313,10 +412,47 @@ def test_report_always_carries_the_custom_regroup_row():
     assert "GONE" in out
 
 
-def test_report_states_that_inconclusive_was_not_counted_as_breakage():
+def test_report_describes_both_probes_and_shows_both_columns():
+    # The cross-tabulation is the point, so a report that shows only the
+    # resolved column hides how the resolution was reached -- and one that
+    # shows only the standalone column is the old lower-bound report.
+    out = render_report(
+        [],
+        branch_sha="deadbee",
+        per_patch={"0001-x.patch": {HunkOutcome.INCONCLUSIVE: 2}},
+        resolved_per_patch={"0001-x.patch": {HunkOutcome.CASCADE: 2}},
+    )
+    assert "standalone" in out.lower()
+    assert "cumulative" in out.lower()
+    assert "series" in out.lower()  # the order the cumulative probe applies in
+    assert "INCONCLUSIVE 2" in out
+    assert "CASCADE 2" in out
+
+
+def test_report_states_the_census_is_complete_and_never_calls_it_a_lower_bound():
+    # This replaces an assertion that the report DOES call its own numbers a
+    # lower bound. That caveat was true of the standalone probe alone; the
+    # cumulative probe resolves all 86 INCONCLUSIVE hunks, so repeating it now
+    # understates a complete result. The absence check is the load-bearing
+    # half: it fails if the stale wording is ever reinstated.
     out = render_report([], branch_sha="deadbee")
-    assert "INCONCLUSIVE" in out
-    assert "lower bound" in out.lower()
+    assert "lower bound" not in out.lower()
+    assert "complete" in out.lower()
+    assert "CASCADE" in out
+    assert "attributable" in out.lower()
+
+
+def test_report_states_the_base_anomaly_invariant_even_at_zero():
+    # BASE_ANOMALY 0 is what makes every other number in the report readable,
+    # and _counts_cell drops zero counts -- so it can never come from the
+    # tally and has to be stated outright.
+    out = render_report(
+        [],
+        branch_sha="deadbee",
+        resolved_per_patch={"0001-x.patch": {HunkOutcome.INTACT: 3}},
+    )
+    assert "BASE_ANOMALY" in out
+    assert "3/3" in out
 
 
 def test_preserve_manual_section_returns_the_hand_written_tail():
