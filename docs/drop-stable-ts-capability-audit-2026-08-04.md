@@ -130,7 +130,6 @@ Every hunk in `patches/`, including patches that map to no advertised capability
 | `0035-bump-patch-rev-v4.20.patch` | 1 | INCONCLUSIVE 1 |
 | `0036-bump-patch-rev-v4.21.patch` | 1 | INCONCLUSIVE 1 |
 
-
 ## Manual pass
 
 The probe judges hunks. It cannot judge whether a *mechanism* has somewhere left to attach, and 86 of 129 hunks came back INCONCLUSIVE, so the machine result is a lower bound on damage and says nothing at all about repair cost. This section opens the branch code for the three veto capabilities plus `CUSTOM_REGROUP` and assigns NATIVE / PORTABLE / GONE by reading, not by counting.

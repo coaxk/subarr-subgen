@@ -578,6 +578,28 @@ def _resolve_branch(upstream: Path) -> tuple[str, str]:
     )
 
 
+MANUAL_MARKER = "## Manual pass"
+
+
+def preserve_manual_section(existing_report: str) -> str:
+    """The hand-written manual pass from an existing report, or "".
+
+    The probe judges hunks; it cannot judge whether a mechanism has somewhere
+    left to attach. That analysis is written by hand under a `## Manual pass`
+    heading and is the part of the report that actually decides the veto.
+
+    This audit is explicitly meant to be re-run when the branch moves, and a
+    plain `python capability_audit.py > report.md` truncates the file before a
+    line of new output is produced -- taking the manual pass with it, silently,
+    with a zero exit code. Regeneration reads it back instead.
+
+    Returns the marker heading onwards, so the result is itself preservable and
+    a second re-run does not lose what the first one kept.
+    """
+    idx = existing_report.find(MANUAL_MARKER)
+    return existing_report[idx:] if idx != -1 else ""
+
+
 def main() -> int:
     # Redirected stdout defaults to the console codepage on Windows, and hunk
     # headers can carry non-ASCII -- without this, `> report.md` dies mid-write.
@@ -625,15 +647,32 @@ def main() -> int:
                 broken.append(h.header.strip())
         rows.append((cap, providers, dict(counts), broken))
 
-    print(
-        render_report(
-            rows,
-            branch_sha,
-            per_patch={k: dict(v) for k, v in per_patch.items()},
-            broken=[h for h, o in results if o is HunkOutcome.BROKEN_BY_BRANCH],
-            base_sha=base_sha,
-        )
+    report = render_report(
+        rows,
+        branch_sha,
+        per_patch={k: dict(v) for k, v in per_patch.items()},
+        broken=[h for h, o in results if o is HunkOutcome.BROKEN_BY_BRANCH],
+        base_sha=base_sha,
     )
+
+    # Writing the file ourselves, rather than leaving it to a `> report.md`
+    # redirect, is the whole point: the redirect truncates before we run and
+    # would take the hand-written manual pass with it.
+    out_path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    if out_path is None:
+        print(report)
+        return 0
+
+    manual = ""
+    if out_path.exists():
+        manual = preserve_manual_section(out_path.read_text(encoding="utf-8"))
+    out_path.write_text(report + ("\n" + manual if manual else ""), encoding="utf-8")
+    kept = (
+        f", preserved {manual.count(chr(10)) + 1} lines of manual pass"
+        if manual
+        else ""
+    )
+    print(f"wrote {out_path}{kept}", file=sys.stderr)
     return 0
 
 
