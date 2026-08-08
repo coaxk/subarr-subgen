@@ -29,6 +29,32 @@ if [[ ! -f "$SERIES_FILE" ]]; then
   exit 2
 fi
 
+# The REAL pin is the submodule gitlink -- that is what a fresh clone and CI
+# check out. scripts/upstream.pin is documentation beside it.
+#
+# Those two can disagree, and when they do this script still passes locally
+# while CI fails: locally the submodule is left checked out wherever you were
+# working, so patches apply against that, whereas CI takes the gitlink. Porting
+# onto upstream 2026.08.1 hit exactly this - upstream.pin was updated, the
+# gitlink was not, and "apply + validate" went green here and red in CI.
+#
+# Fail loudly on the mismatch instead of letting the two drift apart silently.
+PIN_FILE="$REPO_ROOT/scripts/upstream.pin"
+if [[ -f "$PIN_FILE" ]]; then
+  want_pin="$(tr -d '[:space:]' < "$PIN_FILE")"
+  # Read the INDEX, not HEAD: the index is what the next commit will carry, so
+  # a staged submodule bump satisfies the check while a forgotten one still
+  # trips it. Reading HEAD would keep failing after `git add upstream`.
+  have_link="$(git -C "$REPO_ROOT" ls-files -s upstream | awk '{print $2}')"
+  if [[ -n "$want_pin" && -n "$have_link" && "$want_pin" != "$have_link" ]]; then
+    echo "error: upstream pin mismatch." >&2
+    echo "  scripts/upstream.pin : $want_pin" >&2
+    echo "  submodule gitlink    : $have_link   <-- this is what CI checks out" >&2
+    echo "Commit the submodule bump as well:  git add upstream" >&2
+    exit 5
+  fi
+fi
+
 # Reset upstream to the pinned commit so applying patches is deterministic.
 cd "$UPSTREAM_DIR"
 git reset --hard HEAD --quiet
