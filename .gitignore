@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+
+# Transient copy made when running the arm builder, so editing the original
+# cannot corrupt a live bash execution (bash reads scripts by byte offset).
+.build_arms_run.sh
