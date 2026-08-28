@@ -171,7 +171,40 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.21'", "patch 0036 (patch_rev bump v4.21, latest)"),
+        ("subarr_subgen_patch_rev = 'v4.22'", "patch 0038 (patch_rev bump v4.22, latest)"),
+        # --- patch 0037 (#458 image-based subs are not coverage) -------------
+        # The env gate exists and defaults OFF. Image subs are the norm on DVD
+        # and Blu-ray rips, so an accidental default-on would queue thousands
+        # of unannounced transcriptions.
+        (
+            "ignore_image_subtitles = convert_to_bool(os.getenv('IGNORE_IMAGE_SUBTITLES', False))",
+            "patch 0037 (#458 IGNORE_IMAGE_SUBTITLES env, default off)",
+        ),
+        # BOTH naming schemes are in the deny set. ffprobe says
+        # 'hdmv_pgs_subtitle', PyAV says 'pgssub', and THIS code path reads
+        # PyAV -- so a set carrying only the ffprobe spellings matches 1 of 4
+        # and the whole patch becomes a silent no-op that still applies clean
+        # and still passes every structural check. Assert the PyAV spellings
+        # specifically: they are the ones that actually fire at runtime.
+        ("'hdmv_pgs_subtitle', 'pgssub'", "patch 0037 (#458 PGS: both spellings)"),
+        ("'dvd_subtitle', 'dvdsub'", "patch 0037 (#458 VobSub: both spellings)"),
+        ("'dvb_subtitle', 'dvbsub'", "patch 0037 (#458 DVB: both spellings)"),
+        # The internal (embedded stream) check consults the codec.
+        (
+            "if is_image_subtitle_codec(_codec_name):",
+            "patch 0037 (#458 internal check reads the codec)",
+        ),
+        # The external (sidecar) check consults the filename.
+        (
+            "if ignore_image_subtitles and is_image_subtitle_file(file_path):",
+            "patch 0037 (#458 external check screens sidecars)",
+        ),
+        # Reported as the RUNTIME value so subarr can tell an actionable gap
+        # from an un-fillable one (the #79 precedent).
+        (
+            '"ignore_image_subtitles": bool(ignore_image_subtitles),',
+            "patch 0037 (#458 runtime capability exposed)",
+        ),
     ]
     for needle, label in text_checks:
         if needle not in code:
