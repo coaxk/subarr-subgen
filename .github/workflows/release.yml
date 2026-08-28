@@ -98,7 +98,7 @@ jobs:
           echo "image_upstream=ghcr.io/coaxk/subarr-subgen:${UPSTREAM}" >> $GITHUB_OUTPUT
           echo "image_latest=ghcr.io/coaxk/subarr-subgen:latest" >> $GITHUB_OUTPUT
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       # Note: linux/arm64 builds are deliberately out of scope for v1.0.
       # The upstream subgen NVIDIA CUDA base image targets amd64 and ARM64
       # isn't a realistic homelab combo for whisper transcription. Users
