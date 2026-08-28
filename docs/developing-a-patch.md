@@ -46,8 +46,8 @@ Bad reasons:
    git -C upstream -c user.email=subarr@localhost -c user.name="subarr-subgen"      commit -qm "TEMP baseline: existing patch stack applied"
    ```
 
-   Now `format-patch -1` captures only your change. Reset **two** commits at
-   step 7 (yours + this baseline), or reset to the pin hash directly.
+   Now `format-patch -1` captures only your change. Reset to the pin at
+   step 8 (yours + this baseline), or reset to the pin hash directly.
 
    ⚠️ If you edit `upstream/subgen.py` with a Python script from Windows, open
    it with `newline=""` on BOTH read and write. `read_text`/`write_text` use
@@ -84,11 +84,12 @@ Bad reasons:
    echo "0008-my-new-thing.patch" >> patches/series
    ```
 
-8. Reset the submodule (so we're back at the vanilla pin):
+8. Reset the submodule (so we're back at the vanilla pin). Note this is
+   **two** commits now -- yours plus the step-4 baseline -- so reset to the
+   pin hash explicitly rather than counting:
    ```bash
-   cd upstream
-   git reset --hard HEAD~1
-   cd ..
+   git -C upstream reset --hard "$(cat scripts/upstream.pin)"
+   git -C upstream clean -qfd
    ```
 
 9. Test the full stack applies cleanly:
