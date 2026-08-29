@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Sat, 29 Aug 2026 13:43:50 +1000
+Subject: [PATCH] 0039: per-request bypass_skip on POST /batch
+
+Every check in should_skip_file is a coverage or policy heuristic
+inferring whether a file NEEDS a transcript. A caller passing
+bypass_skip has already answered that with more information than we
+have, so re-deriving it can only overrule them.
+
+Motivating case, subarr #458: a file with ENGLISH audio whose only
+English subtitle is a BITMAP. SKIP_IF_AUDIO_LANGUAGES=eng skips it
+because there is nothing to translate, which is right for translation
+and wrong here, because the user wants a readable TEXT transcript of
+speech they can already hear. No combination of existing knobs
+expresses that without unskipping every English file in the library.
+audio_language_override does not help either: it SUBSTITUTES the
+declared language rather than bypassing the check, so declaring en
+lands straight back on the skip list.
+
+Deliberately a blanket bypass rather than per-check. A partial bypass
+means the caller cannot actually say do this file - they would have to
+know which of six heuristics is objecting, and a future seventh would
+silently start refusing them again.
+
+Logged at INFO because it overrides configured policy, so it must be
+visible when it happens rather than inferable from its absence.
+
+Advertised as capabilities.bypass_skip so subarr only offers the action
+against a subgen that honours it. An older build silently drops the
+unknown query param and re-skips, which looks to the user like the
+action did nothing.
+
+Default false, so behaviour is identical for every existing caller.
+---
+ subgen.py | 48 ++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 44 insertions(+), 4 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index e63e496..c8279cf 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -892,6 +892,14 @@ def queue_status():
+             # actually fill it. With this off, subgen still skips the file, so
+             # subarr should say so rather than dangle an un-fillable gap.
+             "ignore_image_subtitles": bool(ignore_image_subtitles),
++            # [v4.23 PATCH] POST /batch accepts bypass_skip=true, which skips
++            # EVERY skip heuristic for that one request. Advertised as a plain
++            # boolean (a static capability, not a runtime value) so subarr only
++            # offers a "transcribe this anyway" action against a subgen that
++            # honours it -- older builds silently drop the unknown query param
++            # and re-skip the file, which looks to the user like the action did
++            # nothing at all.
++            "bypass_skip": True,
+             # [v4.14 PATCH] POST /config can switch model/compute_type at
+             # runtime with rollback — subarr's guided setup live-apply.
+             "runtime_config": True,
+@@ -1228,6 +1236,7 @@ def batch(
+         kwargs: Union[str, None] = Query(default=None),
+         task: Union[str, None] = Query(default=None, enum=["transcribe", "translate"]),
+         ignore_forced: bool = Query(default=False),
++        bypass_skip: bool = Query(default=False),
+ ):
+     # [v4.9 PATCH #131] per-request task override: 'transcribe' or 'translate'
+     # for THIS batch only, instead of the global TRANSCRIBE_OR_TRANSLATE. Lets
+@@ -1273,6 +1282,7 @@ def batch(
+         kwargs_override=kwargs_override,
+         task_override=task_override,
+         ignore_forced_override=True if ignore_forced else None,
++        bypass_skip=bypass_skip,
+     )
+     status = 404 if (not isinstance(result, dict) or result.get("walked", 0) == 0) else 200
+     return JSONResponse(content=result, status_code=status)
+@@ -2722,7 +2732,8 @@ def find_default_audio_track_language(audio_tracks):
+     
+ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE,
+                         audio_language_override: LanguageCode | None = None,
+-                        ignore_forced_override: bool | None = None, **task_kwargs) -> str:
++                        ignore_forced_override: bool | None = None,
++                        bypass_skip: bool = False, **task_kwargs) -> str:
+     global task_queue
+ 
+     # Check if this file is already in the queue or being processed
+@@ -2751,7 +2762,8 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+     force_language = choose_transcribe_language(file_path, force_language, audio_tracks=audio_tracks)
+ 
+     if should_skip_file(file_path, force_language, audio_langs=audio_langs,
+-                        ignore_forced_override=ignore_forced_override):
++                        ignore_forced_override=ignore_forced_override,
++                        bypass_skip=bypass_skip):
+         return "skipped"
+ 
+     # Detect audio language via Whisper if no language is known and detection is enabled
+@@ -2773,7 +2785,8 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+     return "queued"
+ 
+ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=None,
+-                     ignore_forced_override: bool | None = None) -> bool:
++                     ignore_forced_override: bool | None = None,
++                     bypass_skip: bool = False) -> bool:
+     """
+     Determines if subtitle generation should be skipped for a file.
+ 
+@@ -2787,6 +2800,30 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
+     """
+     base_name = os.path.basename(file_path)
+     file_name, file_ext = os.path.splitext(base_name)
++
++    # [v4.23 PATCH] Per-request escape hatch. EVERY check in this function is a
++    # coverage or policy heuristic -- "the audio is a language we skip", "a
++    # subtitle already exists" -- inferring whether the file NEEDS a transcript.
++    # A caller passing bypass_skip has already answered that question with more
++    # information than we have, so re-deriving it here can only overrule them.
++    #
++    # The motivating case (subarr #458): a file with ENGLISH audio whose only
++    # English subtitle is a BITMAP. SKIP_IF_AUDIO_LANGUAGES=eng skips it because
++    # there is nothing to translate, which is correct for translation and wrong
++    # here, because the user wants a readable TEXT transcript of speech they can
++    # already hear. No combination of the existing knobs expresses that without
++    # unskipping every English file in the library.
++    #
++    # Deliberately a blanket bypass rather than a per-check one. A partial
++    # bypass would mean the caller cannot actually say "do this file" -- they
++    # would have to know which of six heuristics is currently objecting, and a
++    # future seventh would silently start refusing them again.
++    #
++    # Logged at INFO, not debug: this overrides configured policy, so it must be
++    # visible in the log when it happens rather than inferable from its absence.
++    if bypass_skip:
++        logging.info(f"[v4.23 PATCH] bypass_skip -- skip checks bypassed by request for {base_name}")
++        return False
+     if transcribe_or_translate == 'translate':
+         target_language = LanguageCode.ENGLISH  # Force our target language as english if we are translating
+ 
+@@ -3424,7 +3461,8 @@ class NewFileHandler(FileSystemEventHandler):
+ 
+ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None = None, reverse : bool = False,
+                         audio_language_override : LanguageCode | None = None, kwargs_override: dict | None = None,
+-                        task_override: str | None = None, ignore_forced_override: bool | None = None):
++                        task_override: str | None = None, ignore_forced_override: bool | None = None,
++                        bypass_skip: bool = False):
+     # [v4.9 PATCH #131] per-request task: override the global transcribe_or_translate
+     # for this batch only (None → keep the global). Drives gen_subtitles_queue's
+     # transcription_type, which flows to model.transcribe(task=...).
+@@ -3480,6 +3518,7 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+         _tally(gen_subtitles_queue(path_mapping(file_path), _task, forceLanguage,
+                                    audio_language_override=audio_language_override,
+                                    ignore_forced_override=ignore_forced_override,
++                                   bypass_skip=bypass_skip,
+                                    kwargs_override=kwargs_override))
+ 
+     # if the path specified was actually a single file and not a folder, process it
+@@ -3492,6 +3531,7 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+             _tally(gen_subtitles_queue(path_mapping(path), _task, forceLanguage,
+                                        audio_language_override=audio_language_override,
+                                        ignore_forced_override=ignore_forced_override,
++                                       bypass_skip=bypass_skip,
+                                        kwargs_override=kwargs_override))
+ 
+     # Set up the observer to watch for new files
