@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Fri, 28 Aug 2026 17:01:16 +1000
+Subject: [PATCH] 0037: do not count image-based subtitles as coverage
+
+A PGS or VobSub track is a sequence of PICTURES. It cannot be searched,
+restyled, retimed or read as text, so treating one as already-has-subtitles
+silently skips a file that genuinely needs transcription. Reported by a
+subarr user whose DVD rips were never transcribed.
+
+Gated behind IGNORE_IMAGE_SUBTITLES, DEFAULT OFF. Unlike forced tracks
+(a handful per library) image subs are the default on every DVD and
+Blu-ray rip and can be a majority of a library, so defaulting this on
+would queue thousands of unannounced transcriptions on someone elses GPU.
+
+Denies the bitmap codecs rather than allow-listing the text ones: ffmpeg
+-decoders confirms those four are the only bitmap subtitle codecs that
+exist, while the text set has a long tail where any omission recreates
+the same bug. Carries BOTH the ffprobe codec_name and the PyAV decoder
+name for each, because they disagree (hdmv_pgs_subtitle to pgssub,
+dvd_subtitle to dvdsub, dvb_subtitle to dvbsub) and this path reads them
+through PyAV. A set with only the ffprobe spellings matches 1 of 4 and
+silently does nothing.
+
+The ambiguous .sub sidecar is resolved by looking for the sibling .idx
+VobSub always writes, since MicroDVD also uses .sub for plain text.
+
+Capability reported as the RUNTIME value so subarr only presents an
+image-only row as an actionable gap when this subgen will actually fill
+it, matching the ignore_forced_subtitles precedent from #79.
+---
+ subgen.py | 86 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 86 insertions(+)
+
+diff --git a/subgen.py b/subgen.py
+index 03aaf4e..c640f01 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -191,6 +191,66 @@ only_match_subgen_subtitles = get_env_with_fallback('SKIP_ONLY_SUBGEN_SUBTITLES'
+ skip_unknown_language = convert_to_bool(os.getenv('SKIP_UNKNOWN_LANGUAGE', False))
+ skip_if_no_audio_language_but_subtitles_exist = get_env_with_fallback('SKIP_IF_NO_LANGUAGE_BUT_SUBTITLES_EXIST', 'SKIP_IF_LANGUAGE_IS_NOT_SET_BUT_SUBTITLES_EXIST', False, convert_to_bool)
+ ignore_forced_subtitles = convert_to_bool(os.getenv('IGNORE_FORCED_SUBTITLES', True))
++# [v4.22 PATCH #458] Image-based subtitle tracks are PICTURES, not text. A PGS
++# or VobSub track cannot be searched, restyled, retimed or read by anything
++# downstream, so treating one as "this file already has subtitles" silently
++# skips a file that genuinely needs a transcription. Reported by a subarr user
++# whose DVD rips were never transcribed because they carried VobSub tracks.
++#
++# We DENY the bitmap codecs rather than allow-list the text ones. Verified
++# against `ffmpeg -decoders`: these four are the ONLY bitmap subtitle codecs
++# that exist, so the set is complete by construction, while the text set has a
++# long tail (microdvd, subviewer, stl, jacosub, sami, mpl2, pjs, realtext,
++# vplayer, subviewer1) where any omission recreates this exact bug. Denying
++# also fails safe -- an unrecognised codec is treated as text, which over-counts
++# coverage visibly, rather than queueing GPU work for a file that has subs.
++#
++# dvb_teletext and eia_608 are deliberately absent: ffmpeg decodes both to text.
++#
++# BOTH SPELLINGS ARE REQUIRED. ffprobe reports a stream's `codec_name`
++# ('hdmv_pgs_subtitle'), but PyAV's `codec_context.name` -- which is what THIS
++# code path reads -- reports the DECODER name ('pgssub'). Measured 2026-08-28
++# against PyAV in this image:
++#     hdmv_pgs_subtitle -> pgssub     dvd_subtitle -> dvdsub
++#     dvb_subtitle      -> dvbsub     xsub         -> xsub
++# A set holding only the ffprobe spellings matches 1 of 4 here, missing PGS and
++# VobSub -- precisely the two codecs that were reported. It would have applied
++# clean, passed the validator, and silently done nothing. Carry both.
++IMAGE_SUBTITLE_CODECS = frozenset({
++    'hdmv_pgs_subtitle', 'pgssub',   # Blu-ray PGS
++    'dvd_subtitle', 'dvdsub',        # DVD VobSub
++    'dvb_subtitle', 'dvbsub',        # DVB broadcast bitmap
++    'xsub',                          # DivX/AVI bitmap (same name either way)
++})
++# .idx is the VobSub index; .pgs is a raw PGS dump. A bare .sub is AMBIGUOUS --
++# MicroDVD uses .sub for text and VobSub uses it for the bitmap payload -- so it
++# is resolved by looking for a sibling .idx rather than guessed at.
++IMAGE_SUBTITLE_EXTENSIONS = frozenset({'.idx', '.pgs'})
++#
++# DEFAULT OFF, deliberately. Unlike forced tracks (a handful per library), image
++# subs are the default on every DVD and Blu-ray rip and can be a MAJORITY of a
++# library. Defaulting this on would queue thousands of unannounced transcriptions
++# on someone else's GPU. Opt in when you want those files transcribed.
++ignore_image_subtitles = convert_to_bool(os.getenv('IGNORE_IMAGE_SUBTITLES', False))
++
++
++def is_image_subtitle_codec(codec_name) -> bool:
++    """True only for codecs KNOWN to be bitmaps. Unknown/missing -> False."""
++    return (codec_name or '').strip().lower() in IMAGE_SUBTITLE_CODECS
++
++
++def is_image_subtitle_file(file_path: str) -> bool:
++    """True for a sidecar that is a bitmap. Resolves the ambiguous .sub by
++    checking for the sibling .idx that VobSub always writes alongside it."""
++    root, ext = os.path.splitext(file_path)
++    ext = ext.lower()
++    if ext in IMAGE_SUBTITLE_EXTENSIONS:
++        return True
++    if ext == '.sub':
++        return os.path.exists(root + '.idx') or os.path.exists(root + '.IDX')
++    return False
++
++
+ should_whisper_detect_audio_language = convert_to_bool(os.getenv('SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE', False))
+ show_in_subname_subgen = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', True))
+ show_in_subname_model = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL', True))
+@@ -825,6 +885,13 @@ def queue_status():
+             # row as an actionable gap when the connected subgen will actually
+             # fill it — vanilla/off subgen would still swallow it.
+             "ignore_forced_subtitles": bool(ignore_forced_subtitles),
++            # [v4.22 PATCH #458] image-based (PGS/VobSub) target-language subs
++            # are NOT coverage. Exposed as the RUNTIME value, same reasoning as
++            # ignore_forced_subtitles above: subarr must only present an
++            # image-only row as an ACTIONABLE gap when the connected subgen will
++            # actually fill it. With this off, subgen still skips the file, so
++            # subarr should say so rather than dangle an un-fillable gap.
++            "ignore_image_subtitles": bool(ignore_image_subtitles),
+             # [v4.14 PATCH] POST /config can switch model/compute_type at
+             # runtime with rollback — subarr's guided setup live-apply.
+             "runtime_config": True,
+@@ -2891,6 +2958,19 @@ def has_internal_subtitle_in_language(video_file: str, target_language: Language
+                     f"target={target_language}"
+                 )
+                 if stream.type == 'subtitle' and 'language' in stream.metadata:
++                    # [v4.22 PATCH #458] A bitmap stream tagged 'eng' made this
++                    # return True and the whole file get skipped, even though a
++                    # picture cannot serve as a subtitle for any downstream use.
++                    # Checked BEFORE the forced logic: the codec disqualifies the
++                    # track regardless of whether it is also forced.
++                    if ignore_image_subtitles:
++                        try:
++                            _codec_name = stream.codec_context.name
++                        except Exception:
++                            _codec_name = None
++                        if is_image_subtitle_codec(_codec_name):
++                            logging.debug(f"Skipping image-based subtitle stream (codec={_codec_name}, language={lang_tag}) in {video_file}")
++                            continue
+                     # [v4.15 PATCH #317] per-request override (ignore_forced on POST
+                     # /batch) wins over the global IGNORE_FORCED_SUBTITLES for THIS call.
+                     _eff_ignore_forced = (ignore_forced_subtitles
+@@ -2939,6 +3019,12 @@ def has_external_subtitle_in_language(video_file: str, target_language: Language
+             if not subtitle_name.startswith(video_name):
+                 continue
+ 
++            # [v4.22 PATCH #458] .idx/.pgs (and a VobSub .sub) are bitmaps.
++            # Counting one as coverage skipped the file permanently.
++            if ignore_image_subtitles and is_image_subtitle_file(file_path):
++                logging.debug(f"Skipping image-based subtitle file {file_name} for {video_file}")
++                continue
++
+             # Extract parts after video filename
+             subtitle_parts = subtitle_name[len(video_name):].lstrip(".").split(".")
+ 

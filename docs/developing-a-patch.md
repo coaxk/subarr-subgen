@@ -34,7 +34,33 @@ Bad reasons:
 3. Develop your change directly in `upstream/subgen.py` (the submodule).
    Test interactively if needed.
 
-4. Commit inside the submodule:
+4. **Create a baseline commit FIRST.** `apply-patches.sh` leaves the existing
+   patches applied but *uncommitted* (staged in the submodule index). A plain
+   `git commit -am` in step 5 therefore sweeps the **entire stack** into one
+   commit, and `format-patch -1` then emits a patch containing every other
+   patch's changes as well. It will not apply to a pristine tree, and the
+   failure looks like a conflict rather than an authoring mistake.
+
+   ```bash
+   git -C upstream add -A
+   git -C upstream -c user.email=subarr@localhost -c user.name="subarr-subgen"      commit -qm "TEMP baseline: existing patch stack applied"
+   ```
+
+   Now `format-patch -1` captures only your change. Reset to the pin at
+   step 8 (yours + this baseline), or reset to the pin hash directly.
+
+   ⚠️ If you edit `upstream/subgen.py` with a Python script from Windows, open
+   it with `newline=""` on BOTH read and write. `read_text`/`write_text` use
+   default newline translation, which rewrites the whole file's line endings
+   and produces a single whole-file hunk (~7000 lines) instead of your ~90.
+   ⚠️ Do not diagnose that with `grep -c $''` in Git Bash -- it reads in text
+   mode and reports every line as CRLF regardless. Use
+   `python -c "d=open('subgen.py','rb').read(); print(d.count(b'
+'))"`.
+   The honest check is `git -C upstream diff --numstat`: it should show your
+   change size and nothing more.
+
+5. Commit inside the submodule:
    ```bash
    cd upstream
    git -c user.email=subarr@localhost -c user.name="subarr-subgen" \
@@ -44,7 +70,7 @@ Bad reasons:
    any non-obvious design choices."
    ```
 
-5. Generate the `.patch` file:
+6. Generate the `.patch` file:
    ```bash
    git -C upstream format-patch -1 --no-signature --zero-commit \
      -o ../patches/
@@ -53,34 +79,35 @@ Bad reasons:
    This produces `patches/NNNN-<commit-subject-slug>.patch`. Rename it to
    your canonical filename (e.g. `0008-my-new-thing.patch`).
 
-6. Add to the series in order:
+7. Add to the series in order:
    ```bash
    echo "0008-my-new-thing.patch" >> patches/series
    ```
 
-7. Reset the submodule (so we're back at the vanilla pin):
+8. Reset the submodule (so we're back at the vanilla pin). Note this is
+   **two** commits now -- yours plus the step-4 baseline -- so reset to the
+   pin hash explicitly rather than counting:
    ```bash
-   cd upstream
-   git reset --hard HEAD~1
-   cd ..
+   git -C upstream reset --hard "$(cat scripts/upstream.pin)"
+   git -C upstream clean -qfd
    ```
 
-8. Test the full stack applies cleanly:
+9. Test the full stack applies cleanly:
    ```bash
    bash scripts/apply-patches.sh
    python scripts/validate-patched.py
    ```
 
-9. Add validator checks for your patch in `scripts/validate-patched.py`
+10. Add validator checks for your patch in `scripts/validate-patched.py`
    if it has a testable structural contract (e.g. a new endpoint, a new
    function signature).
 
-10. Test the docker build:
+11. Test the docker build:
     ```bash
     bash scripts/build.sh
     ```
 
-11. Commit + PR.
+12. Commit + PR.
 
 ## Patch ordering
 

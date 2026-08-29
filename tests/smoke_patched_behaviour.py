@@ -170,6 +170,83 @@ check(
 )
 
 
+# ---------------------------------------------------------------------------
+# patch 0037 (#458): image-based subtitles are not coverage
+#
+# The failure mode this guards is a SILENT NO-OP, not a crash. ffprobe names a
+# stream's codec 'hdmv_pgs_subtitle' but PyAV's codec_context.name -- which is
+# what has_internal_subtitle_in_language actually reads -- says 'pgssub'. A
+# deny set carrying only the ffprobe spellings applies clean, passes every
+# structural gate, and matches nothing at runtime. These checks exercise the
+# real predicates so that cannot pass unnoticed.
+# ---------------------------------------------------------------------------
+
+check(
+    "#458 PyAV decoder spellings are denied (the silent-no-op case)",
+    all(subgen.is_image_subtitle_codec(n) for n in ("pgssub", "dvdsub", "dvbsub", "xsub")),
+    "these are what PyAV reports, not the ffprobe names",
+)
+check(
+    "#458 ffprobe codec_name spellings are denied too",
+    all(
+        subgen.is_image_subtitle_codec(n)
+        for n in ("hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub")
+    ),
+)
+check(
+    "#458 text codecs survive, including the long tail and both srt spellings",
+    not any(
+        subgen.is_image_subtitle_codec(n)
+        for n in ("subrip", "srt", "ass", "ssa", "mov_text", "microdvd",
+                  "subviewer", "stl", "jacosub", "sami", "mpl2", "cc_dec")
+    ),
+)
+check(
+    "#458 dvb_teletext and eia_608 are NOT denied (ffmpeg decodes both to text)",
+    not subgen.is_image_subtitle_codec("dvb_teletext")
+    and not subgen.is_image_subtitle_codec("eia_608"),
+)
+check(
+    "#458 an unknown codec is treated as TEXT (fails safe, does not skip work)",
+    not subgen.is_image_subtitle_codec("some_future_format")
+    and not subgen.is_image_subtitle_codec(None),
+)
+
+# The ambiguous .sub: MicroDVD writes text to .sub, VobSub writes a bitmap to
+# .sub and ALWAYS pairs it with a .idx. Resolve by looking, not by guessing.
+_subdir = tempfile.mkdtemp()
+_lone = os.path.join(_subdir, "microdvd_movie.sub")
+open(_lone, "w").close()
+_vob = os.path.join(_subdir, "vobsub_movie.sub")
+open(_vob, "w").close()
+open(os.path.join(_subdir, "vobsub_movie.idx"), "w").close()
+
+check(
+    "#458 a .sub WITH a sibling .idx is VobSub -> image",
+    subgen.is_image_subtitle_file(_vob),
+)
+check(
+    "#458 a LONE .sub is MicroDVD text -> not image",
+    not subgen.is_image_subtitle_file(_lone),
+    "guessing here would throw away real text subtitles",
+)
+check(
+    "#458 .idx and .pgs are unconditionally image",
+    subgen.is_image_subtitle_file(os.path.join(_subdir, "x.idx"))
+    and subgen.is_image_subtitle_file(os.path.join(_subdir, "x.pgs")),
+)
+check(
+    "#458 .srt/.ass sidecars are never image",
+    not subgen.is_image_subtitle_file(os.path.join(_subdir, "x.srt"))
+    and not subgen.is_image_subtitle_file(os.path.join(_subdir, "x.ass")),
+)
+check(
+    "#458 IGNORE_IMAGE_SUBTITLES defaults OFF",
+    subgen.ignore_image_subtitles is False,
+    "image subs are the norm on DVD/Blu-ray rips; default-on would queue "
+    "thousands of unannounced transcriptions",
+)
+
 print()
 print("RESULT:", "ALL SMOKES PASSED" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}")
 sys.exit(1 if FAILS else 0)
