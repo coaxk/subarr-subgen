@@ -171,7 +171,20 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.22'", "patch 0038 (patch_rev bump v4.22, latest)"),
+        ("subarr_subgen_patch_rev = 'v4.23'", "patch 0040 (patch_rev bump v4.23, latest)"),
+        # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
+        # The bypass must reach should_skip_file. Every link in the chain is
+        # asserted separately: a missing kwarg anywhere in
+        # /batch -> transcribe_existing -> gen_subtitles_queue -> should_skip_file
+        # silently falls back to the default False, so the endpoint accepts
+        # bypass_skip=true, returns 200, and still skips the file. That reads to
+        # the user as "the button does nothing" with no error anywhere.
+        ("bypass_skip: bool = Query(default=False),", "patch 0039 (bypass_skip on /batch)"),
+        ("bypass_skip=bypass_skip,", "patch 0039 (threaded from /batch)"),
+        ("bypass_skip: bool = False, **task_kwargs", "patch 0039 (gen_subtitles_queue accepts it)"),
+        ("bypass_skip=bypass_skip):", "patch 0039 (reaches should_skip_file)"),
+        ("    if bypass_skip:", "patch 0039 (the early-out exists)"),
+        ('"bypass_skip": True,', "patch 0039 (capability advertised)"),
         # --- patch 0037 (#458 image-based subs are not coverage) -------------
         # The env gate exists and defaults OFF. Image subs are the norm on DVD
         # and Blu-ray rips, so an accidental default-on would queue thousands

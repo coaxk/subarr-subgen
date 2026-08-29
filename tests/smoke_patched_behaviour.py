@@ -247,6 +247,46 @@ check(
     "thousands of unannounced transcriptions",
 )
 
+# ---------------------------------------------------------------------------
+# patch 0039 (#458 follow-on): per-request bypass_skip
+#
+# The failure mode is silent: if the kwarg is dropped anywhere along
+# /batch -> transcribe_existing -> gen_subtitles_queue -> should_skip_file it
+# defaults to False, the endpoint still returns 200, and the file is still
+# skipped. To the user that is "the button does nothing", with no error.
+# ---------------------------------------------------------------------------
+
+import inspect as _inspect
+
+_chain = {
+    "should_skip_file": subgen.should_skip_file,
+    "gen_subtitles_queue": subgen.gen_subtitles_queue,
+    "transcribe_existing": subgen.transcribe_existing,
+}
+for _name, _fn in _chain.items():
+    check(
+        f"#458/0039 {_name} accepts bypass_skip",
+        "bypass_skip" in _inspect.signature(_fn).parameters,
+    )
+
+# The early-out must short-circuit BEFORE any filesystem or ffprobe work, which
+# is what makes it safe to call on anything. A path that does not exist proves
+# it: if any check ran first this would raise or stall, not return False.
+check(
+    "#458/0039 bypass_skip returns False without touching the file",
+    subgen.should_skip_file(
+        "/nonexistent/definitely/not/here.mkv",
+        subgen.LanguageCode.from_string("en"),
+        audio_langs=[subgen.LanguageCode.from_string("en")],
+        bypass_skip=True,
+    ) is False,
+)
+
+check(
+    "#458/0039 default is False so existing callers are unchanged",
+    _inspect.signature(subgen.should_skip_file).parameters["bypass_skip"].default is False,
+)
+
 print()
 print("RESULT:", "ALL SMOKES PASSED" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}")
 sys.exit(1 if FAILS else 0)
