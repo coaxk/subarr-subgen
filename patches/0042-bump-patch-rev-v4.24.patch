@@ -1,0 +1,25 @@
+From 86f5529a5076289a4e514c4a15e639600bedd815 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Tue, 1 Sep 2026 13:26:31 +1000
+Subject: [PATCH] bump patch rev to v4.24
+
+---
+ subgen.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/subgen.py b/subgen.py
+index d270bea..7c87c45 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.08.1'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.23'
++subarr_subgen_patch_rev = 'v4.24'
+ 
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+-- 
+2.55.0.windows.4
+
