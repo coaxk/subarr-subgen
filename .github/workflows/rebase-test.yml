@@ -99,9 +99,15 @@ jobs:
         id: validate
         if: steps.apply.outcome == 'success'
         continue-on-error: true
-        run: |
-          python -m pip install --quiet  # nothing needed, just to set python up
-          python scripts/validate-patched.py
+        # NOTE: this step used to begin with `python -m pip install --quiet`,
+        # commented "nothing needed, just to set python up". pip with no package
+        # exits 1, so the step ALWAYS failed on its first line and
+        # validate-patched.py never ran. Present since this workflow was written.
+        # Two consequences, in opposite directions: the "patches broke" issue
+        # fired every week whatever upstream was doing, AND the validator half of
+        # the drift check was never actually exercised. validate-patched.py
+        # imports only stdlib, so nothing needs installing.
+        run: python scripts/validate-patched.py
 
       - name: report — clean drift (new upstream, patches still apply)
         if: steps.apply.outcome == 'success' && steps.validate.outcome == 'success' && env.UPSTREAM_HEAD != env.PINNED_SHA
@@ -116,6 +122,12 @@ jobs:
 
       - name: report — patches broke
         if: steps.apply.outcome == 'failure' || steps.validate.outcome == 'failure'
+        # Name WHICH half failed. This issue previously blamed "upstream drift"
+        # for ANY failure, including a broken step in this workflow itself, which
+        # sends a reader off to port patches that do not need porting.
+        env:
+          FAILED_STEP: >-
+            ${{ steps.apply.outcome == 'failure' && 'apply-patches.sh' || 'validate-patched.py' }}
         run: |
           bash scripts/sticky-issue.sh \
             "${{ github.repository }}" \
@@ -123,7 +135,7 @@ jobs:
             "Upstream drift broke patches (HEAD=${UPSTREAM_HEAD_SHORT})" \
             .github/issue-templates/drift-detected.md \
             "upstream-drift,blocking,patch-drift" \
-            "Still drifting as of $(date -u +%Y-%m-%dT%H:%MZ) — upstream HEAD=${UPSTREAM_HEAD_SHORT}. ${RUN_URL}"
+            "Still drifting as of $(date -u +%Y-%m-%dT%H:%MZ) — upstream HEAD=${UPSTREAM_HEAD_SHORT}, failed step: ${FAILED_STEP}. ${RUN_URL}"
 
       - name: report — stable-ts REMOVED from main (subarr#171 trigger fired)
         if: env.STABLE_TS_PRESENT == 'no'
