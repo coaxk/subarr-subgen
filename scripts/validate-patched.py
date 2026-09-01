@@ -171,7 +171,7 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.23'", "patch 0040 (patch_rev bump v4.23, latest)"),
+        ("subarr_subgen_patch_rev = 'v4.24'", "patch 0042 (patch_rev bump v4.24, latest)"),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
         # asserted separately: a missing kwarg anywhere in
@@ -217,6 +217,22 @@ def main() -> int:
         (
             '"ignore_image_subtitles": bool(ignore_image_subtitles),',
             "patch 0037 (#458 runtime capability exposed)",
+        ),
+        # patch 0041 (subarr#483). Upstream excludes forced EMBEDDED tracks and
+        # says why in its own docstring, but never screened SIDECARS, so a
+        # .en.forced.srt counted as full English coverage and the file was
+        # skipped forever. Assert the sidecar screen specifically: the embedded
+        # half already existed and would mask a dropped patch.
+        (
+            'any(part.lower() == "forced" for part in subtitle_parts)',
+            "patch 0041 (#483 external check screens forced sidecars)",
+        ),
+        # The per-request override must reach the sidecar check too, or a caller
+        # can bypass forced-exclusion for embedded tracks and silently not for
+        # external ones.
+        (
+            "only_match_subgen_subtitles=only_match_subgen_subtitles, ignore_forced_override=ignore_forced_override",
+            "patch 0041 (#483 override reaches the external check)",
         ),
     ]
     for needle, label in text_checks:

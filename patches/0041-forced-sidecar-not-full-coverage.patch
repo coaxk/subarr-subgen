@@ -1,0 +1,82 @@
+From 87b33708d10c4abb6062d7f9952d71a236ad34fc Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Tue, 1 Sep 2026 13:26:19 +1000
+Subject: [PATCH] patch 0041 (v4.24): forced sidecars are not full external
+ coverage (subarr#483)
+
+A forced sidecar covers only the foreign-language lines, not the dialogue,
+so it is not full subtitle coverage. Upstream ALREADY excludes forced
+EMBEDDED tracks for exactly this reason and says so in its own docstring,
+but never applied the same rule to sidecars, so a .en.forced.srt satisfied
+the English check and the file was skipped with no way to get a full sub.
+
+It bites subarr specifically: subarr's forced-segment feature WRITES
+.en.forced.srt, so subarr could generate a forced sidecar and then be
+refused the full transcription it actually wanted.
+
+Order-agnostic: .en.forced.srt and the legacy .forced.en.srt both carry the
+marker, so both are screened. The per-request ignore_forced override now
+reaches the sidecar check too, or a caller could bypass forced-exclusion
+for embedded tracks and silently not for external ones.
+
+Reported as coaxk/subarr#483 by AztecGuyGDL.
+---
+ subgen.py | 28 ++++++++++++++++++++++++++--
+ 1 file changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index 90a8411..d270bea 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2967,7 +2967,10 @@ def subtitle_exists_in_language(video_file, target_language: LanguageCode, ignor
+     # Embedded tracks can never be subgen-created files, so when only_match_subgen_subtitles
+     # is set, internal subtitle streams should not count as coverage.
+     internal = (not only_match_subgen_subtitles) and has_internal_subtitle_in_language(video_file, target_language, ignore_forced_override=ignore_forced_override)
+-    external = has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
++    # [v4.24 PATCH #483] the per-request ignore_forced override must reach the
++    # sidecar check too, or a caller can bypass forced-exclusion for embedded
++    # tracks and silently not for external ones.
++    external = has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles, ignore_forced_override=ignore_forced_override)
+     return internal or external
+ 
+ def has_internal_subtitle_in_language(video_file: str, target_language: LanguageCode, ignore_forced_override: bool | None = None) -> bool:
+@@ -3025,7 +3028,7 @@ def has_internal_subtitle_in_language(video_file: str, target_language: Language
+         logging.error(f"An error occurred while checking the file with pyav: {type(e).__name__}: {e}")
+         return False
+ 
+-def has_external_subtitle_in_language(video_file: str, target_language: LanguageCode, recursion: bool = True, only_match_subgen_subtitles: bool = False) -> bool:
++def has_external_subtitle_in_language(video_file: str, target_language: LanguageCode, recursion: bool = True, only_match_subgen_subtitles: bool = False, ignore_forced_override: bool | None = None) -> bool:
+     """Checks if the given folder has a subtitle file with the given language.
+     Args:
+         video_file (str): The path of the video file.
+@@ -3065,6 +3068,27 @@ def has_external_subtitle_in_language(video_file: str, target_language: Language
+             # Extract parts after video filename
+             subtitle_parts = subtitle_name[len(video_name):].lstrip(".").split(".")
+ 
++            # [v4.24 PATCH #483] A forced sidecar covers only the foreign-language
++            # lines, not the dialogue, so it is not full subtitle coverage.
++            # Upstream ALREADY excludes forced EMBEDDED tracks for exactly this
++            # reason and says so in its own docstring, but never applied the same
++            # rule to sidecars. So a `.en.forced.srt` satisfied the English check
++            # and the file was skipped forever, with no way to get a full sub.
++            #
++            # It bites subarr specifically: subarr's forced-segment feature WRITES
++            # `.en.forced.srt`, so subarr could generate a forced sidecar and then
++            # be refused the full transcription it actually wanted.
++            #
++            # Order-agnostic on purpose: `.en.forced.srt` -> ['en', 'forced'] and
++            # the legacy `.forced.en.srt` -> ['forced', 'en'] both carry the
++            # marker, so both names are screened. Reported as subarr#483.
++            _eff_ignore_forced = (ignore_forced_subtitles
++                                  if ignore_forced_override is None
++                                  else ignore_forced_override)
++            if _eff_ignore_forced and any(part.lower() == "forced" for part in subtitle_parts):
++                logging.debug(f"Skipping forced subtitle file {file_name} for {video_file}")
++                continue
++
+             # Check for "subgen"
+             has_subgen = "subgen" in subtitle_parts
+ 
+-- 
+2.55.0.windows.4
+

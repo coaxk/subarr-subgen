@@ -43,3 +43,5 @@
 0038-bump-patch-rev-v4.22.patch
 0039-per-request-bypass-skip.patch
 0040-bump-patch-rev-v4.23.patch
+0041-forced-sidecar-not-full-coverage.patch
+0042-bump-patch-rev-v4.24.patch
