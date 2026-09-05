@@ -171,7 +171,7 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.24'", "patch 0042 (patch_rev bump v4.24, latest)"),
+        ("subarr_subgen_patch_rev = 'v4.25'", "patch 0043 (patch_rev bump v4.25, latest)"),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
         # asserted separately: a missing kwarg anywhere in
