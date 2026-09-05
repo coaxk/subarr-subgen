@@ -17,7 +17,7 @@ Git tags mirror image tags exactly: `v2026.05.3-r1`.
 | `<upstream>-r<rev>` | Immutable — points at one specific build | Never moves |
 | `<upstream>` | Latest `-r*` for this upstream pin | Every release that targets this upstream |
 | `latest` | Newest release, regardless of stability | Every release |
-| `stable` | Manually promoted; safe for non-power-users | Manually, after ≥7 days in `latest` with no reported regression |
+| `stable` | Manually promoted; safe for non-power-users | Manually, after the CODE has served ≥7 days with no reported regression. A pure OS-security rebuild of already-soaked code does NOT restart that clock, because re-soaking would strand `stable` on unpatched packages for another week. `promote-stable.yml` carries the authoritative wording; v4.20 and v4.25 are both that case. |
 | `dev` | `main` branch HEAD builds | Every `push` to `main` (not PRs) |
 
 ## Production guidance
