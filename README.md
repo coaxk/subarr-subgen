@@ -43,11 +43,15 @@ If you don't run subarr, you probably don't need this. Use upstream
 
 ### One difference from upstream: this image never self-updates
 
-**`UPDATE`, `LAUNCHER_UPDATE` and `BRANCH` are ignored here.** Upstream's
-launcher re-downloads `subgen.py` from McCloudS/subgen every time the container
-starts. This image ships a *patched* `subgen.py`, so that download would replace
-every patch with vanilla code while the image tag still claimed a patch rev. The
-symptom is a `404` on `/queue` and subarr quietly dropping to compat mode with no
+**`UPDATE`, `LAUNCHER_UPDATE`, `BRANCH` and `--install` are ignored here.**
+Upstream's launcher re-downloads `subgen.py` from McCloudS/subgen every time the
+container starts, and `--install` re-installs upstream's `requirements.txt` over
+the pinned dependency set. This image ships a *patched* `subgen.py` and pins its
+dependencies at build time, so either would replace what you pulled: the first
+swaps every patch for vanilla code while the image tag still claims a patch rev,
+the second moves faster-whisper / ctranslate2 / stable-ts out from under the
+baked `SUBGEN_KWARGS` and the CUDA build they were chosen against. The
+symptom of the first is a `404` on `/queue` and subarr quietly dropping to compat mode with no
 explanation ([#59](https://github.com/coaxk/subarr-subgen/issues/59)).
 
 This matters most if you are **migrating an existing upstream compose file**,
