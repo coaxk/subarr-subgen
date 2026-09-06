@@ -28,6 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TARGET = REPO / "upstream" / "subgen.py"
+LAUNCHER = REPO / "upstream" / "launcher.py"
 
 
 def fail(msg: str) -> None:
@@ -57,6 +58,78 @@ def fn_returns_string_constant(tree, name):
                 ):
                     return True
     return False
+
+
+def validate_launcher() -> None:
+    """Patch 0044: this fork must never re-download its own code at runtime.
+
+    Upstream's launcher fetches subgen.py / launcher.py / language_code.py from
+    McCloudS/subgen at container start, which silently replaces the entire patch
+    stack with vanilla code while the image tag and OCI labels still advertise a
+    patch rev (coaxk/subarr-subgen#59).
+
+    The real contract here is an ABSENCE (no download call survives), and an
+    absence check is exactly the kind that can pass while measuring nothing. So
+    it is paired with three positives: a guard that is defined but never called,
+    or a launch target that BRANCH can still rename, would each leave the
+    download reachable while the absence assertion stayed green.
+    """
+    if not LAUNCHER.is_file():
+        fail(f"{LAUNCHER} not found - did you run apply-patches.sh?")
+    code = LAUNCHER.read_text(encoding="utf-8")
+
+    try:
+        compile(code, str(LAUNCHER), "exec")
+    except SyntaxError as e:
+        fail(f"launcher.py compile() failed: {e}")
+    ok("launcher.py compile() passed")
+
+    tree = ast.parse(code)
+
+    # Positive 1: the guard exists.
+    if not any(
+        isinstance(n, ast.FunctionDef) and n.name == "warn_self_update_disabled"
+        for n in ast.walk(tree)
+    ):
+        fail("launcher.py has no warn_self_update_disabled() - patch 0044 not landed")
+    ok("patch 0044 (warn_self_update_disabled defined)")
+
+    # Positive 2: and it is actually CALLED. A defined-but-unwired guard would
+    # satisfy the assertion above while doing nothing at runtime.
+    if not any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "warn_self_update_disabled"
+        for n in ast.walk(tree)
+    ):
+        fail("warn_self_update_disabled() is defined but never called - patch 0044")
+    ok("patch 0044 (warn_self_update_disabled wired into main)")
+
+    # Positive 3: the launch target is a literal. BRANCH=<name> renames it to
+    # subgen-<name>.py upstream, which this image does not contain, and that
+    # re-arms the download-if-missing arm with no opt-in from the operator.
+    if 'subgen_script_to_run = "subgen.py"' not in code:
+        fail("subgen_script_to_run is not pinned to a literal subgen.py - patch 0044")
+    ok("patch 0044 (launch target pinned to the baked subgen.py)")
+
+    # The contract itself: no runtime download of our own code survives.
+    # requirements.txt is passed by variable, so it does not trip this.
+    forbidden = ("subgen.py", "launcher.py", "language_code.py")
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "download_from_github"
+        ):
+            dumped = ast.dump(node)
+            hit = [f for f in forbidden if f in dumped]
+            if hit:
+                fail(
+                    "launcher.py still downloads "
+                    + ", ".join(hit)
+                    + f" at runtime (line {node.lineno}) - patch 0044 not landed"
+                )
+    ok("patch 0044 (no runtime download of subgen.py/launcher.py/language_code.py)")
 
 
 def main() -> int:
@@ -171,7 +244,10 @@ def main() -> int:
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
-        ("subarr_subgen_patch_rev = 'v4.25'", "patch 0043 (patch_rev bump v4.25, latest)"),
+        (
+            "subarr_subgen_patch_rev = 'v4.26'",
+            "patch 0045 (patch_rev bump v4.26, latest)",
+        ),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
         # asserted separately: a missing kwarg anywhere in
@@ -179,9 +255,15 @@ def main() -> int:
         # silently falls back to the default False, so the endpoint accepts
         # bypass_skip=true, returns 200, and still skips the file. That reads to
         # the user as "the button does nothing" with no error anywhere.
-        ("bypass_skip: bool = Query(default=False),", "patch 0039 (bypass_skip on /batch)"),
+        (
+            "bypass_skip: bool = Query(default=False),",
+            "patch 0039 (bypass_skip on /batch)",
+        ),
         ("bypass_skip=bypass_skip,", "patch 0039 (threaded from /batch)"),
-        ("bypass_skip: bool = False, **task_kwargs", "patch 0039 (gen_subtitles_queue accepts it)"),
+        (
+            "bypass_skip: bool = False, **task_kwargs",
+            "patch 0039 (gen_subtitles_queue accepts it)",
+        ),
         ("bypass_skip=bypass_skip):", "patch 0039 (reaches should_skip_file)"),
         ("    if bypass_skip:", "patch 0039 (the early-out exists)"),
         ('"bypass_skip": True,', "patch 0039 (capability advertised)"),
@@ -239,6 +321,8 @@ def main() -> int:
         if needle not in code:
             fail(f"text: missing — {label} (needle: {needle!r})")
         ok(label)
+
+    validate_launcher()
 
     print()
     print("VALIDATE: all gates passed.")

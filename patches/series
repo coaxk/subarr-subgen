@@ -46,3 +46,5 @@
 0041-forced-sidecar-not-full-coverage.patch
 0042-bump-patch-rev-v4.24.patch
 0043-bump-patch-rev-v4.25.patch
+0044-never-self-update.patch
+0045-bump-patch-rev-v4.26.patch
