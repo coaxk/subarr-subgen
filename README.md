@@ -41,6 +41,23 @@ replacement.
 If you don't run subarr, you probably don't need this. Use upstream
 `mccloud/subgen:latest` instead.
 
+### One difference from upstream: this image never self-updates
+
+**`UPDATE`, `LAUNCHER_UPDATE` and `BRANCH` are ignored here.** Upstream's
+launcher re-downloads `subgen.py` from McCloudS/subgen every time the container
+starts. This image ships a *patched* `subgen.py`, so that download would replace
+every patch with vanilla code while the image tag still claimed a patch rev. The
+symptom is a `404` on `/queue` and subarr quietly dropping to compat mode with no
+explanation ([#59](https://github.com/coaxk/subarr-subgen/issues/59)).
+
+This matters most if you are **migrating an existing upstream compose file**,
+because `UPDATE=True` is a common setting to carry across. Nothing breaks if you
+leave it set: the container logs a notice naming the setting and runs the correct
+baked code anyway. Remove it to silence the notice.
+
+To move to a newer upstream, pull a newer image tag. To run vanilla subgen, use
+the upstream image.
+
 ## Patches included
 
 | # | Patch | What it adds |

@@ -1,0 +1,219 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Sun, 6 Sep 2026 18:05:24 +1000
+Subject: [PATCH 1/2] 0044: never self-update, this fork ships patched code
+
+Upstream launcher re-downloads subgen.py and language_code.py from
+McCloudS/subgen at container start. In this image that is destructive: we bake
+a PATCHED subgen.py, and the download silently replaces every patch (/queue,
+/batch, the capabilities block, subarr_subgen_patch_rev) with vanilla upstream
+code while the image tag and the OCI labels still advertise a patch rev.
+
+subarr then gets a 404 on /queue, classifies the instance as vanilla subgen,
+drops to compat mode, and nothing anywhere says why. Reported as issue 59,
+where the operator moved an existing upstream compose file onto this image and
+kept UPDATE=True.
+
+Three ways in, all now inert:
+
+  UPDATE / --update                    explicit, and the common one, because it
+                                       is carried over verbatim by anyone
+                                       migrating from an upstream compose file
+  LAUNCHER_UPDATE / --launcher-update  same, for launcher.py itself, which
+                                       re-arms the subgen.py download on the
+                                       next start
+  BRANCH / --branch NAME               implicit, and the one nobody would
+                                       notice: it renames the target to
+                                       subgen-NAME.py, so the download-if-
+                                       missing arm fires with no opt-in, writes
+                                       a second file, and launches that instead
+                                       while our patched subgen.py sits
+                                       untouched beside it
+
+The script names are pinned to the baked files, and a missing subgen.py is now
+a hard failure rather than a silent reinstall of vanilla code, because in this
+image it can only mean a corrupt build and downloading over it would hide
+exactly the fault worth seeing.
+
+This warns rather than exits. The baked code is correct, so the container keeps
+serving, and the notice names the offending setting and what to do instead.
+Reading the environment after load_env_variables means a value set in
+subgen.env is reported too, not just one in the container environment.
+
+Verified against a vanilla control: with UPDATE=True vanilla replaced an
+85 byte sentinel subgen.py with the 108308 byte upstream download, and with
+BRANCH=dev it fetched subgen-dev.py plus language_code-dev.py. The patched
+launcher downloaded nothing, kept the baked file, and warned, in all three
+cases.
+
+Not closed here, deliberately: --install still downloads requirements.txt from
+upstream and pip-installs it, which can move faster-whisper or stable-ts
+underneath the baked SUBGEN_KWARGS. It is CLI-only, has no environment
+variable trigger and is not in the image CMD, so it takes a deliberate command
+override rather than an inherited setting.
+---
+ launcher.py | 128 ++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 108 insertions(+), 20 deletions(-)
+
+diff --git a/launcher.py b/launcher.py
+index fd95c7e..a833e48 100644
+--- a/launcher.py
++++ b/launcher.py
+@@ -68,6 +68,85 @@ def load_env_variables(env_filename='subgen.env'):
+     except FileNotFoundError:
+         print(f"{env_filename} file not found. Consider running with --setup-bazarr or creating it manually.")
+ 
++# --- subarr-subgen: this fork never self-updates -----------------------------
++# Upstream's launcher re-downloads subgen.py (and launcher.py, and
++# language_code.py) from McCloudS/subgen at container start. In THIS image that
++# is destructive: we ship a PATCHED subgen.py, and the download silently
++# replaces every patch -- /queue, /batch, the capabilities block,
++# subarr_subgen_patch_rev -- with vanilla upstream code, while the image tag and
++# the OCI labels still advertise a patch rev. subarr then gets a 404 on /queue,
++# drops to compat mode, and nothing anywhere says why.
++# Reported as coaxk/subarr-subgen#59.
++#
++# There are three ways in, not one:
++#   UPDATE / --update                    explicit, and the common one: it gets
++#                                        carried over verbatim by anyone
++#                                        migrating an existing upstream compose
++#                                        file onto this image
++#   LAUNCHER_UPDATE / --launcher-update  same, for launcher.py itself
++#   BRANCH / --branch <name>             implicit, and the nastiest: it renames
++#                                        the target to subgen-<name>.py, which
++#                                        this image does not contain, so the
++#                                        "download if missing" arm fires with
++#                                        no opt-in at all
++#
++# All three are inert here and the script names are pinned to the baked files.
++# This WARNS rather than exits, because the baked code is correct and the
++# container should keep serving. To take a newer upstream, pull a newer image
++# tag; to run vanilla subgen, use the upstream image.
++#
++# Deliberately NOT closed by this patch: `--install` still downloads
++# requirements.txt from upstream and pip-installs it, which can move
++# faster-whisper / stable-ts underneath our baked SUBGEN_KWARGS. It is CLI-only,
++# has no environment-variable trigger, and is not in this image's CMD, so
++# reaching it takes a deliberate command override rather than an inherited
++# setting.
++SELF_UPDATE_DISABLED_BANNER = "=" * 78
++
++
++def self_update_requests(args):
++    """Return the self-update inputs being ignored, as human-readable strings.
++
++    An empty list means the operator asked for nothing, so we stay quiet. The
++    environment is read live rather than cached so this also sees values that
++    load_env_variables() pulled in from subgen.env, not just the container env.
++    """
++    requests = []
++    if convert_to_bool(os.getenv('UPDATE')):
++        requests.append("UPDATE=%s" % os.getenv('UPDATE'))
++    if convert_to_bool(os.getenv('LAUNCHER_UPDATE')):
++        requests.append("LAUNCHER_UPDATE=%s" % os.getenv('LAUNCHER_UPDATE'))
++    env_branch = os.getenv('BRANCH', 'main')
++    if env_branch != 'main':
++        requests.append("BRANCH=%s" % env_branch)
++    if getattr(args, 'update', False):
++        requests.append("--update")
++    if getattr(args, 'launcher_update', False):
++        requests.append("--launcher-update")
++    if getattr(args, 'branch', 'main') != 'main':
++        requests.append("--branch %s" % args.branch)
++    return requests
++
++
++def warn_self_update_disabled(args):
++    """Print a loud, actionable notice naming every ignored self-update input."""
++    requests = self_update_requests(args)
++    if not requests:
++        return
++    print(SELF_UPDATE_DISABLED_BANNER)
++    print("subarr-subgen: IGNORING %s" % ", ".join(requests))
++    print("")
++    print("This image ships a PATCHED subgen.py. Upstream's self-update would")
++    print("overwrite it with vanilla code from McCloudS/subgen on every start,")
++    print("removing /queue, /batch and the capabilities subarr needs, while the")
++    print("image tag still claimed a patch rev. So it is disabled in this image.")
++    print("")
++    print("Nothing is broken: the patched subgen.py is what runs. Remove the")
++    print("setting above to silence this notice. To take a newer upstream, pull a")
++    print("newer image tag. To run vanilla subgen, use the upstream image.")
++    print(SELF_UPDATE_DISABLED_BANNER)
++
++
+ def main():
+     if sys.version_info[0] < 3:
+         print(f"This script requires Python 3 or higher, you are running {sys.version}")
+@@ -89,20 +168,18 @@ def main():
+ 
+     args = parser.parse_args()
+ 
+-    branch_name = args.branch if args.branch != 'main' else os.getenv('BRANCH', 'main')
+-    script_name_suffix = f"-{branch_name}.py" if branch_name != "main" else ".py"
+-    subgen_script_to_run = f"subgen{script_name_suffix}"
+-    language_code_script_to_download = f"language_code{script_name_suffix}"
++    # [subarr-subgen] The scripts are BAKED into this image, so their names are
++    # fixed. Upstream derives them from BRANCH/--branch, and any non-main value
++    # renames the target to a file this image does not contain, which makes the
++    # "download if missing" arm below fire and replace our patched code
++    # with vanilla upstream. See the self-update note above.
++    subgen_script_to_run = "subgen.py"
++    language_code_script_to_download = "language_code.py"
+ 
+ 
+-    if args.launcher_update or convert_to_bool(os.getenv('LAUNCHER_UPDATE')):
+-        print(f"Updating launcher.py from GitHub branch {branch_name}...")
+-        download_from_github(f"https://raw.githubusercontent.com/McCloudS/subgen/{branch_name}/launcher.py", f'launcher{script_name_suffix}')
+-        excluded_args = ['--launcher-update', '-l']
+-        new_args = [arg for arg in sys.argv[1:] if arg not in excluded_args]
+-        print(f"Relaunching updated launcher: launcher{script_name_suffix}")
+-        os.execl(sys.executable, sys.executable, f"launcher{script_name_suffix}", *new_args)
+-        # The script will not continue past os.execl
++    # [subarr-subgen] Upstream re-downloads launcher.py here and re-execs into
++    # it, which would also restore the subgen.py download below. Removed; the
++    # request is reported by warn_self_update_disabled() instead.
+ 
+     # --- Environment Variable Handling ---
+     # 1. Load from .env file first. This sets a baseline.
+@@ -118,6 +195,11 @@ def main():
+         # Load if not setting up, assuming subgen.env might exist
+         load_env_variables()
+ 
++    # [subarr-subgen] Deliberately AFTER load_env_variables(): subgen.env can
++    # set UPDATE too, and a notice that only read the container environment
++    # would stay silent for exactly the operator who needs it most.
++    warn_self_update_disabled(args)
++
+ 
+     # 2. Override with command-line arguments (highest priority for these specific flags)
+     if args.debug: # If -d or --debug was passed
+@@ -144,14 +226,20 @@ def main():
+         download_from_github(requirements_url, requirements_file)
+         install_packages_from_requirements(requirements_file)
+ 
+-    if not os.path.exists(subgen_script_to_run) or args.update or convert_to_bool(os.getenv('UPDATE')):
+-        print(f"Downloading {subgen_script_to_run} from GitHub branch {branch_name}...")
+-        download_from_github(f"https://raw.githubusercontent.com/McCloudS/subgen/{branch_name}/subgen.py", subgen_script_to_run)
+-        print(f"Downloading {language_code_script_to_download} from GitHub branch {branch_name}...")
+-        download_from_github(f"https://raw.githubusercontent.com/McCloudS/subgen/{branch_name}/language_code.py", language_code_script_to_download)
+-
+-    else:
+-        print(f"{subgen_script_to_run} exists and UPDATE is set to False, skipping download.")
++    # [subarr-subgen] Upstream downloads subgen.py + language_code.py here when
++    # UPDATE is set, --update is passed, or the target is simply missing. All
++    # three are disabled: this image bakes both files, patched.
++    #
++    # A missing script is now a hard failure rather than a silent reinstall of
++    # vanilla code. In this image it can only mean a corrupt build, and
++    # downloading over it would hide precisely the fault worth seeing.
++    if not os.path.exists(subgen_script_to_run):
++        print(f"FATAL: {subgen_script_to_run} is missing from this image.", file=sys.stderr)
++        print("subarr-subgen bakes a patched subgen.py and never downloads one at", file=sys.stderr)
++        print("runtime, so this image is corrupt. Pull it again.", file=sys.stderr)
++        sys.exit(1)
++    print(f"subarr-subgen: running the baked, patched {subgen_script_to_run} "
++          f"(self-update disabled).")
+ 
+     if not args.exit_early:
+         #print(f"DEBUG environment variable for subgen.py: {os.getenv('DEBUG')}")
