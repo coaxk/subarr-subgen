@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coaxk <juddhowie@gmail.com>
+Date: Mon, 7 Sep 2026 12:56:39 +1000
+Subject: [PATCH 1/2] 0048: advertise the effective SKIP_IF_AUDIO_LANGUAGES
+ list, and stop the override log claiming a bypass
+
+subarr cannot currently decide whether forwarding a user-verified audio language
+is safe, because audio_language_override SUBSTITUTES that language into the skip
+check rather than bypassing it:
+
+    if audio_language_override is not None:
+        audio_langs = [audio_language_override]
+    ...
+    if any(lang in skip_audio_languages for lang in audio_langs):
+        return True   # skip
+
+Declaring en to an install that sets SKIP_IF_AUDIO_LANGUAGES=eng therefore SKIPS
+the file, which is the opposite of what the verifying user wanted. subarr had no
+way to tell such an install apart from one that skips nothing, so it withheld
+English overrides from everyone and silently discarded a verification the user
+had explicitly made. Reported as coaxk/subarr#498 by IdahoRC.
+
+The effective list is now advertised in the /queue capabilities block as
+2-letter ISO-639-1 codes, empty when unset. Emitted as codes rather than as a
+boolean so subarr can answer the same question for any target language later,
+not just English. Verified serialisation: unset gives [], eng gives ['en'],
+eng|jpn gives ['en','ja'], and an unparseable code is filtered rather than
+emitting a null into the list.
+
+The log line is also corrected. It claimed the override will bypass the
+SKIP_IF_AUDIO_LANGUAGES check. It never did. It replaces the value that check
+reads, and that wording is precisely what led the reporter to conclude the
+mechanism was safe for English.
+---
+ subgen.py | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/subgen.py b/subgen.py
+index 6da0584..f5c08d9 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -828,6 +828,20 @@ def queue_status():
+         "subarr_subgen_release_tag": subarr_subgen_release_tag,
+         "capabilities": {
+             "audio_language_override": True,
++            # [v4.28 PATCH #498] The EFFECTIVE SKIP_IF_AUDIO_LANGUAGES list, as
++            # 2-letter ISO-639-1 codes ([] when unset). subarr needs to see this
++            # because audio_language_override SUBSTITUTES the declared language
++            # into the skip check rather than bypassing it: forwarding a verified
++            # 'en' to an install that skips English audio makes the file SKIP
++            # instead of transcribe, which is the opposite of the user's intent.
++            # Without this list subarr cannot tell such an install apart from one
++            # that skips nothing, so it had to withhold English overrides from
++            # everybody -- discarding a verification the user had explicitly made
++            # (coaxk/subarr#498). Emitted as codes rather than a bool so subarr
++            # can answer the same question for any target language later.
++            "skip_audio_languages": [
++                c for c in (lc.to_iso_639_1() for lc in skip_audio_languages) if c
++            ],
+             # [PATCH 0027 / #17] detect_language_robust accepts ?track=N (0-based
+             # audio stream) so subarr can language-detect a specific non-default
+             # track -- gates the Review "re-run on track N" confirmation UI.
+@@ -3496,7 +3510,10 @@ def transcribe_existing(transcribe_folders, forceLanguage : LanguageCode | None
+     logging.info(f"Starting to search folders to see if we need to create subtitles (Reverse={reverse}).")
+     if audio_language_override is not None:
+         logging.info(f"[v4.3 PATCH] audio_language_override={audio_language_override.to_name()} — "
+-                     f"will bypass SKIP_IF_AUDIO_LANGUAGES check + seed Whisper source.")
++                     f"REPLACES the detected audio language for the "
++                     f"SKIP_IF_AUDIO_LANGUAGES check (it does NOT bypass that "
++                     f"check, so declaring a skipped language will skip the file) "
++                     f"+ seeds the Whisper source language.")
+     logging.debug("The folders are:")
+ 
+     # [v4.1 PATCH] Structured dispatch counts for /batch return.

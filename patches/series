@@ -50,3 +50,5 @@
 0045-bump-patch-rev-v4.26.patch
 0046-no-runtime-install.patch
 0047-bump-patch-rev-v4.27.patch
+0048-advertise-skip-audio-languages.patch
+0049-bump-patch-rev-v4.28.patch
