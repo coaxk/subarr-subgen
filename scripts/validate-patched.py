@@ -112,24 +112,46 @@ def validate_launcher() -> None:
         fail("subgen_script_to_run is not pinned to a literal subgen.py - patch 0044")
     ok("patch 0044 (launch target pinned to the baked subgen.py)")
 
-    # The contract itself: no runtime download of our own code survives.
-    # requirements.txt is passed by variable, so it does not trip this.
-    forbidden = ("subgen.py", "launcher.py", "language_code.py")
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "download_from_github"
-        ):
-            dumped = ast.dump(node)
-            hit = [f for f in forbidden if f in dumped]
-            if hit:
-                fail(
-                    "launcher.py still downloads "
-                    + ", ".join(hit)
-                    + f" at runtime (line {node.lineno}) - patch 0044 not landed"
-                )
-    ok("patch 0044 (no runtime download of subgen.py/launcher.py/language_code.py)")
+    # Positive 4 (patch 0046): --install is reported like the other inputs.
+    if "getattr(args, 'install', False)" not in code:
+        fail("--install is not reported by self_update_requests() - patch 0046")
+    ok("patch 0046 (--install reported as an ignored input)")
+
+    # ── The contract itself ──────────────────────────────────────────────
+    # As of patch 0046 this fork downloads NOTHING at runtime, so the gate is
+    # simply that download_from_github has zero call sites. That is strictly
+    # stronger than the filename allow-list this replaced, which could only
+    # catch the three names it happened to know about and let requirements.txt
+    # through because it was passed by variable rather than as a literal.
+    callers = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "download_from_github"
+    ]
+    if callers:
+        fail(
+            "launcher.py still downloads at runtime, %d call site(s) at line(s) %s"
+            " - patch 0044/0046 not landed"
+            % (len(callers), ", ".join(str(n.lineno) for n in callers))
+        )
+    ok("patch 0044/0046 (download_from_github has zero call sites)")
+
+    # And nothing re-resolves the pinned dependency set at runtime either.
+    installers = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "install_packages_from_requirements"
+    ]
+    if installers:
+        fail(
+            "launcher.py still pip-installs at runtime (line %s) - patch 0046 not landed"
+            % ", ".join(str(n.lineno) for n in installers)
+        )
+    ok("patch 0046 (no runtime pip install over the pinned deps)")
 
 
 def main() -> int:
@@ -245,8 +267,8 @@ def main() -> int:
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.26'",
-            "patch 0045 (patch_rev bump v4.26, latest)",
+            "subarr_subgen_patch_rev = 'v4.27'",
+            "patch 0047 (patch_rev bump v4.27, latest)",
         ),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is

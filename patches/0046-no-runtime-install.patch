@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Mon, 7 Sep 2026 00:02:07 +1000
+Subject: [PATCH 1/2] 0046: close the last runtime-mutation vector, --install
+
+Patch 0044 stopped this image replacing its own patched subgen.py at container
+start. It deliberately left one path open: --install downloaded requirements.txt
+from McCloudS/subgen main and pip-installed it over the baked dependency set.
+
+That is the same class one step removed. It replaces what the patched code RUNS
+ON rather than the code itself, and it can move faster-whisper, ctranslate2 or
+stable-ts out from under the baked SUBGEN_KWARGS and the CUDA build those were
+chosen against.
+
+It was never the footgun UPDATE was. UPDATE gets carried over verbatim from an
+upstream compose file and fires on every start; reaching --install always took a
+deliberate override of the image CMD. It is closed because the rule is worth
+keeping whole rather than because it was dangerous: a fork that never mutates
+itself at runtime is a rule you can actually check, and a rule with one
+documented exception is where the next gap grows.
+
+install_packages_from_requirements is left DEFINED but uncalled, so the
+divergence from upstream stays a single deleted call site rather than fighting
+every upstream edit to that function.
+
+The startup notice now names --install alongside the other ignored inputs, and
+its wording covers dependencies as well as code, since the previous text spoke
+only about subgen.py.
+
+Verified with a real control, made safe by PIP_REQUIRE_VIRTUALENV=true so the
+download half still executes and is observable while nothing can install:
+vanilla fetched requirements.txt (108 bytes), patched fetched nothing, warned
+naming --install, left the sentinel subgen.py intact and exited 0. A pip freeze
+fingerprint taken before and after was unchanged, proving the guard held.
+
+The validator gate is now STRONGER than what it replaces. Instead of an
+allow-list of three filenames, which could only catch the names it knew about
+and let requirements.txt through because it was passed by variable rather than
+as a literal, it asserts download_from_github has ZERO call sites, plus a second
+gate that install_packages_from_requirements has zero call sites.
+---
+ launcher.py | 48 +++++++++++++++++++++++++++++++-----------------
+ 1 file changed, 31 insertions(+), 17 deletions(-)
+
+diff --git a/launcher.py b/launcher.py
+index a833e48..52e326a 100644
+--- a/launcher.py
++++ b/launcher.py
+@@ -95,12 +95,17 @@ def load_env_variables(env_filename='subgen.env'):
+ # container should keep serving. To take a newer upstream, pull a newer image
+ # tag; to run vanilla subgen, use the upstream image.
+ #
+-# Deliberately NOT closed by this patch: `--install` still downloads
+-# requirements.txt from upstream and pip-installs it, which can move
+-# faster-whisper / stable-ts underneath our baked SUBGEN_KWARGS. It is CLI-only,
+-# has no environment-variable trigger, and is not in this image's CMD, so
+-# reaching it takes a deliberate command override rather than an inherited
+-# setting.
++# `--install` is closed too, as of patch 0046. It downloaded requirements.txt
++# from upstream main and pip-installed it, which can move faster-whisper /
++# ctranslate2 / stable-ts underneath the baked SUBGEN_KWARGS and the CUDA build
++# they were chosen against. It is the same class one step removed: it replaces
++# what the patched code RUNS ON rather than the code itself.
++#
++# It was never the footgun UPDATE was -- reaching it always took a deliberate
++# command override, never an inherited environment variable. It is closed
++# because the rule is worth keeping whole: a fork that never mutates itself at
++# runtime is a rule you can check, and a rule with one documented exception is
++# where the next gap grows.
+ SELF_UPDATE_DISABLED_BANNER = "=" * 78
+ 
+ 
+@@ -125,6 +130,8 @@ def self_update_requests(args):
+         requests.append("--launcher-update")
+     if getattr(args, 'branch', 'main') != 'main':
+         requests.append("--branch %s" % args.branch)
++    if getattr(args, 'install', False):
++        requests.append("--install")
+     return requests
+ 
+ 
+@@ -136,12 +143,14 @@ def warn_self_update_disabled(args):
+     print(SELF_UPDATE_DISABLED_BANNER)
+     print("subarr-subgen: IGNORING %s" % ", ".join(requests))
+     print("")
+-    print("This image ships a PATCHED subgen.py. Upstream's self-update would")
+-    print("overwrite it with vanilla code from McCloudS/subgen on every start,")
+-    print("removing /queue, /batch and the capabilities subarr needs, while the")
+-    print("image tag still claimed a patch rev. So it is disabled in this image.")
++    print("This image bakes a PATCHED subgen.py and a pinned dependency set.")
++    print("Self-update would overwrite the code with vanilla from McCloudS/subgen")
++    print("on every start, removing /queue, /batch and the capabilities subarr")
++    print("needs while the image tag still claimed a patch rev; --install would")
++    print("pip-install upstream requirements.txt over the pinned deps. Both are")
++    print("disabled in this image.")
+     print("")
+-    print("Nothing is broken: the patched subgen.py is what runs. Remove the")
++    print("Nothing is broken: the baked code and deps are what run. Remove the")
+     print("setting above to silence this notice. To take a newer upstream, pull a")
+     print("newer image tag. To run vanilla subgen, use the upstream image.")
+     print(SELF_UPDATE_DISABLED_BANNER)
+@@ -219,12 +228,17 @@ def main():
+     # --- End Environment Variable Handling ---
+ 
+ 
+-    requirements_url = "https://raw.githubusercontent.com/McCloudS/subgen/main/requirements.txt"
+-    requirements_file = "requirements.txt"
+-
+-    if args.install:
+-        download_from_github(requirements_url, requirements_file)
+-        install_packages_from_requirements(requirements_file)
++    # [subarr-subgen] Upstream downloaded requirements.txt from McCloudS/subgen
++    # here and pip-installed it when --install was passed. Disabled: this image
++    # pins its dependency set at build time, and re-resolving it from upstream
++    # main at RUNTIME can move faster-whisper / ctranslate2 / stable-ts out from
++    # under the baked SUBGEN_KWARGS and the CUDA build they were chosen against.
++    # Same class as the subgen.py download below, one step removed: it replaces
++    # what the patched code RUNS ON rather than the code itself.
++    #
++    # install_packages_from_requirements() is deliberately left DEFINED but
++    # uncalled, so the divergence from upstream stays a single deleted call site
++    # and this patch does not fight every upstream edit to that function.
+ 
+     # [subarr-subgen] Upstream downloads subgen.py + language_code.py here when
+     # UPDATE is set, --update is passed, or the target is simply missing. All
