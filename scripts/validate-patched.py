@@ -261,14 +261,22 @@ def main() -> int:
             "patch 0029 (#6 /queue config_switch)",
         ),
         ('"async_config": True', "patch 0029 (#6 async_config capability)"),
+        # patch 0048 (subarr#498). subarr must be able to SEE the effective skip
+        # list, because audio_language_override substitutes into the skip check
+        # rather than bypassing it, so forwarding a verified 'en' to an install
+        # that skips English audio skips the file instead of transcribing it.
+        (
+            '"skip_audio_languages": [',
+            "patch 0048 (#498 effective skip list advertised)",
+        ),
         # patch_rev is cumulative -- each bump patch overwrites the last, so the
         # only value observable in the fully-patched tree is the newest one.
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.27'",
-            "patch 0047 (patch_rev bump v4.27, latest)",
+            "subarr_subgen_patch_rev = 'v4.28'",
+            "patch 0049 (patch_rev bump v4.28, latest)",
         ),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
