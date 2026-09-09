@@ -269,14 +269,26 @@ def main() -> int:
             '"skip_audio_languages": [',
             "patch 0048 (#498 effective skip list advertised)",
         ),
+        # patch 0050 (subarr#505). subarr must be able to SEE what this instance
+        # can PRODUCE, not just what it will skip. Whisper writes one language
+        # per job -- always English in translate mode -- so without this subarr
+        # queues a row wanting a language this instance cannot make, forever.
+        (
+            '"transcribe_or_translate": transcribe_or_translate,',
+            "patch 0050 (#505 output task advertised)",
+        ),
+        (
+            '"subtitle_language_name": subtitle_language_name or "",',
+            "patch 0050 (#505 output naming advertised)",
+        ),
         # patch_rev is cumulative -- each bump patch overwrites the last, so the
         # only value observable in the fully-patched tree is the newest one.
         # Assert against the LAST bump patch in the series and update this needle
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.28'",
-            "patch 0049 (patch_rev bump v4.28, latest)",
+            "subarr_subgen_patch_rev = 'v4.29'",
+            "patch 0051 (patch_rev bump v4.29, latest)",
         ),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
