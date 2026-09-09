@@ -31,34 +31,39 @@ Bad reasons:
    bash scripts/apply-patches.sh
    ```
 
-3. Develop your change directly in `upstream/subgen.py` (the submodule).
-   Test interactively if needed.
+3. **Create the baseline commit BEFORE you write a single line of your change.**
+   `apply-patches.sh` leaves the existing patches applied but *uncommitted* in
+   the submodule, and `git add -A` below stages EVERYTHING. So:
 
-4. **Create a baseline commit FIRST.** `apply-patches.sh` leaves the existing
-   patches applied but *uncommitted* (staged in the submodule index). A plain
-   `git commit -am` in step 5 therefore sweeps the **entire stack** into one
-   commit, and `format-patch -1` then emits a patch containing every other
-   patch's changes as well. It will not apply to a pristine tree, and the
-   failure looks like a conflict rather than an authoring mistake.
+   - Run it first, and the baseline captures the existing stack only, which is
+     what you want: `format-patch -1` in step 6 then contains just your change.
+   - Write your change first and the baseline SWALLOWS it. There is nothing
+     left to commit in step 5, and the patch you generate is empty or wrong.
+     Recovering means resetting to the pin, re-applying, and redoing the edit.
+
+   This document used to number these two steps the other way round, which is
+   exactly how that mistake gets made.
 
    ```bash
    git -C upstream add -A
-   git -C upstream -c user.email=subarr@localhost -c user.name="subarr-subgen"      commit -qm "TEMP baseline: existing patch stack applied"
+   git -C upstream -c user.email=subarr@localhost -c user.name="subarr-subgen" \
+     commit -qm "TEMP baseline: existing patch stack applied"
    ```
 
-   Now `format-patch -1` captures only your change. Reset to the pin at
-   step 8 (yours + this baseline), or reset to the pin hash directly.
+   Reset to the pin hash directly at step 8, rather than counting commits.
 
-   ⚠️ If you edit `upstream/subgen.py` with a Python script from Windows, open
-   it with `newline=""` on BOTH read and write. `read_text`/`write_text` use
-   default newline translation, which rewrites the whole file's line endings
-   and produces a single whole-file hunk (~7000 lines) instead of your ~90.
-   ⚠️ Do not diagnose that with `grep -c $''` in Git Bash -- it reads in text
-   mode and reports every line as CRLF regardless. Use
-   `python -c "d=open('subgen.py','rb').read(); print(d.count(b'
-'))"`.
-   The honest check is `git -C upstream diff --numstat`: it should show your
-   change size and nothing more.
+4. **Now** develop your change in `upstream/subgen.py` (the submodule). Test
+   interactively if needed.
+
+   WARNING: if you edit it with a Python script from Windows, open the file
+   with `newline=""` on BOTH read and write. `read_text`/`write_text` use
+   default newline translation, which rewrites every line ending and produces a
+   single whole-file hunk (~7000 lines) instead of your ~90.
+
+   WARNING: do not diagnose that with `grep -c` in Git Bash. It reads in text
+   mode and reports every line the same way regardless. The honest check is
+   `git -C upstream diff --numstat`, which should show your change size and
+   nothing more.
 
 5. Commit inside the submodule:
    ```bash

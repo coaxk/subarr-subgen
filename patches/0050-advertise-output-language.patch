@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Wed, 9 Sep 2026 19:21:04 +1000
+Subject: [PATCH] 0050: advertise the output-language configuration
+
+Whisper writes exactly ONE subtitle language per job, and subarr could not
+see which. In translate mode the output is always English regardless of the
+file; in transcribe mode it is the file's own audio language. Neither was
+visible in the capabilities block.
+
+The consequence is a loop where both sides are behaving correctly. subarr
+sees a row wanting Spanish with no Spanish subtitle and queues it. subgen,
+which in translate mode can only ever write English, sees the English
+subtitle it would have produced already sitting on disk and refuses. The row
+is queued again on the next walk, refused again, forever. Reported as
+coaxk/subarr#505 by AztecGuyGDL, who measured about fifteen files cycling on
+a fifteen minute schedule.
+
+Emitted as the raw settings rather than a resolved language, because in
+transcribe mode the producible language is per-FILE and only subarr knows the
+audio language of the row it is weighing. Together with the existing
+per_request_task capability, subarr can derive the full producible set:
+English via translate, or the file's own audio language via transcribe.
+
+subtitle_language_name is included because it renames the OUTPUT FILE without
+changing the language of its contents. An install in translate mode with
+SUBTITLE_LANGUAGE_NAME=es writes English text into a .es.srt, and subarr
+should be able to see that contradiction rather than trust the filename.
+---
+ subgen.py | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/subgen.py b/subgen.py
+index beea7ed..77d5e87 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -842,6 +842,29 @@ def queue_status():
+             "skip_audio_languages": [
+                 c for c in (lc.to_iso_639_1() for lc in skip_audio_languages) if c
+             ],
++            # [v4.29 PATCH #505] What this instance can PRODUCE, as distinct
++            # from what it will skip. Whisper writes exactly ONE language per
++            # job: in translate mode that is always English no matter what the
++            # file contains, and in transcribe mode it is the file's own audio
++            # language. subarr could see neither, so it would queue a row
++            # wanting Spanish at an English-only instance forever -- subarr
++            # correctly sees Spanish missing, subgen sees the English subtitle
++            # it would have written already present and refuses, and nothing
++            # connects the two (coaxk/subarr#505, reported by AztecGuyGDL).
++            #
++            # Emitted as the raw setting rather than a resolved language,
++            # because in transcribe mode the answer is per-FILE and only
++            # subarr knows the audio language of the row it is considering.
++            # Combined with per_request_task above, subarr can work out the
++            # full producible set: English via translate, or the file's own
++            # audio language via transcribe.
++            "transcribe_or_translate": transcribe_or_translate,
++            # Renames the OUTPUT FILE without changing the language of its
++            # CONTENTS. An install in translate mode with
++            # SUBTITLE_LANGUAGE_NAME=es writes English text into a .es.srt,
++            # so subarr needs this to spot that contradiction rather than
++            # trusting the filename it is about to be handed.
++            "subtitle_language_name": subtitle_language_name or "",
+             # [PATCH 0027 / #17] detect_language_robust accepts ?track=N (0-based
+             # audio stream) so subarr can language-detect a specific non-default
+             # track -- gates the Review "re-run on track N" confirmation UI.
