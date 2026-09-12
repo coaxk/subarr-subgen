@@ -38,6 +38,15 @@ services:
 That's it. Same env-vars as upstream, same volumes, same ports. Drop-in
 replacement.
 
+**One variable upstream does not have: `SUBGEN_PATH_ALLOWLIST`.** The
+path-accepting endpoints (`/batch ?directory=`, `/asr ?path=`,
+`/detect_language_robust ?path=`) answer unauthenticated on your LAN, so this
+image only serves paths under a colon-separated allowlist, default `/media`
+(patch 0025). If your media is mounted at `/data` inside the container, set
+`SUBGEN_PATH_ALLOWLIST=/data`, or every request is refused with 403
+`directory is outside the allowed media root`. An empty value disables the
+guard; do not do that on a network you share.
+
 If you don't run subarr, you probably don't need this. Use upstream
 `mccloud/subgen:latest` instead.
 
