@@ -97,7 +97,14 @@ ENV CUSTOM_REGROUP="cm_sp=.* /。/?/？_sg=.5_mg=.3++84_p=.3+.7+1.5_sl=42++++++1
 # (faster-whisper #477). Overridable: any SUBGEN_KWARGS you set wins.
 # Contested knobs (condition_on_previous_text=false, VAD timing) are called
 # out in the r9 release notes.
-ENV SUBGEN_KWARGS='{"no_speech_threshold": 0.6, "vad_filter": true, "vad_parameters": {"threshold": 0.5, "min_speech_duration_ms": 250, "min_silence_duration_ms": 500, "speech_pad_ms": 600}, "condition_on_previous_text": false, "beam_size": 5, "patience": 1.0, "length_penalty": 1.0, "repetition_penalty": 1.05, "no_repeat_ngram_size": 3, "compression_ratio_threshold": 2.4, "log_prob_threshold": -0.8, "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]}'
+#
+# [r10] VAD threshold 0.5 -> 0.35 (subarr#543). At 0.5 the Silero pre-filter cut
+# whispered and under-score dialogue before Whisper saw it. #171 Phase 2 corpus,
+# baseline run twice byte-identical (zero noise): authored-subtitle recall
+# 72.63% -> 74.18%, share of captioning outside authored subs flat at ~24.3%,
+# 0.30 bought nothing more. no_speech_threshold was ruled out (0.6 -> 0.4 gave
+# byte-identical output). Locked by tests/test_baked_kwargs.py.
+ENV SUBGEN_KWARGS='{"no_speech_threshold": 0.6, "vad_filter": true, "vad_parameters": {"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 500, "speech_pad_ms": 600}, "condition_on_previous_text": false, "beam_size": 5, "patience": 1.0, "length_penalty": 1.0, "repetition_penalty": 1.05, "no_repeat_ngram_size": 3, "compression_ratio_threshold": 2.4, "log_prob_threshold": -0.8, "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]}'
 
 # [r9] The one per-language override that survived the 17-override prune
 # (JA subtitle convention plausibly matches the longer length_penalty).

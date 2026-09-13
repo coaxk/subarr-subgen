@@ -56,6 +56,14 @@ jobs:
       - name: validate-patched.py
         run: python scripts/validate-patched.py
 
+      # Our own tests (tests/, see pytest.ini). None ran in CI before, so the
+      # lock on the baked SUBGEN_KWARGS (tests/test_baked_kwargs.py, subarr#543)
+      # guarded only a local run. Pinned; stdlib-only otherwise.
+      - name: pytest
+        run: |
+          python -m pip install --disable-pip-version-check pytest==9.0.3
+          python -m pytest -q
+
       - name: upload patched subgen.py as artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
