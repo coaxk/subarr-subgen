@@ -134,6 +134,12 @@ jobs:
           cp -a upstream/. build/
           rm -rf build/.git
 
+      # [#63] Daily value for the Dockerfile's APT_REFRESH, so the security
+      # upgrade layer is rebuilt at least once a day even with a warm cache.
+      - name: apt refresh date
+        id: aptdate
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: build + push (linux/amd64)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -145,10 +151,17 @@ jobs:
             UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
             PATCH_REV=${{ steps.version.outputs.rev }}
             RELEASE_TAG=${{ steps.version.outputs.tag }}
+            APT_REFRESH=${{ steps.aptdate.outputs.date }}
           tags: |
             ${{ steps.version.outputs.image_full }}
             ${{ steps.version.outputs.image_upstream }}
             ${{ steps.version.outputs.image_latest }}
+          # [#63] Persistent layer cache in GHCR, so an unchanged torch layer is
+          # REUSED byte-for-byte and users do not re-download it. Registry, not
+          # type=gha: the GHA cache caps at 10 GB and evicts after 7 idle days,
+          # which a 7.3 GB image between infrequent releases would hit.
+          cache-from: type=registry,ref=ghcr.io/coaxk/subarr-subgen:buildcache
+          cache-to: type=registry,ref=ghcr.io/coaxk/subarr-subgen:buildcache,mode=max
 
       - name: create GitHub release
         # zizmor suggests `gh release create` instead of a third-party action.

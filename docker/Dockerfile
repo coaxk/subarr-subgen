@@ -27,44 +27,47 @@
 # (python3.10) to minimise the blast radius.
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
-ARG UPSTREAM_VERSION=unknown
-ARG PATCH_REV=unknown
-# [r9 / subarr#224] The GHCR release tag this image was built from
-# (e.g. v2026.05.3-r9). Emitted in the /queue caps body as
-# subarr_subgen_release_tag so subarr's update check compares
-# like-for-like instead of patch-rev vs date-tag (which made every
-# install show a permanent fake "update available").
-ARG RELEASE_TAG=dev
-ENV SUBARR_SUBGEN_RELEASE_TAG="${RELEASE_TAG}"
+# [#63] LAYER ORDER IS A DOWNLOAD-SIZE DECISION. Every layer below a changed
+# instruction is rebuilt and becomes a NEW blob users must pull. Until r10 the
+# release tag was declared at the top of this file, so every release rebuilt
+# apt and the 4 GB torch layer and users re-downloaded ~4.4 GB for a one-line
+# patch (measured on GHCR: r8->r9 and r9->r10 both). Order is now: stable and
+# heavy first (packages, pinned torch, requirements), the per-build security
+# upgrade in its own small layer, app files, and release metadata LAST.
+# tests/test_dockerfile_layers.py locks this.
 
-LABEL org.opencontainers.image.title="subarr-subgen"
-LABEL org.opencontainers.image.description="McCloudS/subgen + subarr-required patches"
-LABEL org.opencontainers.image.source="https://github.com/coaxk/subarr-subgen"
-LABEL org.opencontainers.image.licenses="MIT"
-LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
-LABEL subarr.subgen.patch_rev="${PATCH_REV}"
-LABEL subarr.subgen.release_tag="${RELEASE_TAG}"
-LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
-
-# Apt packages — own layer so pip changes don't re-run apt.
-# `apt-get upgrade` pulls base-image security patches (the cuda:12.8 base
-# ships gnupg 2.2.27-3ubuntu2.1, flagged HIGH by trivy as CVE-2025-68973;
-# fix is 2.2.27-3ubuntu2.5). Patching at build time keeps the trivy gate
-# green legitimately rather than suppressing the finding, and hardens the
-# rest of the base packages too.
+# Apt packages — installed, NOT upgraded here. The upgrade lives in its own
+# later layer so refreshing security patches never rebuilds torch.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg python3 python3-pip curl gosu tzdata
 
-# Torch — large and rarely changes; own layer so requirements.txt changes don't bust it
+# Torch — 4 GB and rarely changes. PINNED: an unpinned `-U` moved torch silently
+# and produced a new 4 GB blob on every rebuild. 2.11.0+cu128 is what r10
+# shipped and was verified against; bump deliberately, in its own change.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install -U torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    python3 -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 
-# App dependencies — only rebuilds when requirements.txt changes
+# App dependencies — only rebuilds when requirements.txt changes. Upstream's
+# requirements do not list torch, and pip's default only-if-needed strategy
+# leaves the pinned torch alone.
 COPY requirements.txt /
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install -U -r /requirements.txt \
+    python3 -m pip install -U -r /requirements.txt
+
+# Security upgrade — its own layer, AFTER the heavy ones. `apt-get upgrade`
+# pulls base-image security patches (the cuda:12.8 base shipped gnupg
+# 2.2.27-3ubuntu2.1, flagged HIGH by trivy as CVE-2025-68973). With a
+# persistent build cache this RUN would otherwise be a cache hit for days and
+# silently stop shipping patches (the subarr GHA-cache lesson). APT_REFRESH is a
+# date passed by every build; the `echo` that REFERENCES it is what makes a new
+# date a cache miss. It looks like dead weight. It is not.
+ARG APT_REFRESH=0
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    echo "apt-refresh=${APT_REFRESH}" \
+    && apt-get update && apt-get upgrade -y \
     && apt-get purge -y --auto-remove python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -109,6 +112,28 @@ ENV SUBGEN_KWARGS='{"no_speech_threshold": 0.6, "vad_filter": true, "vad_paramet
 # [r9] The one per-language override that survived the 17-override prune
 # (JA subtitle convention plausibly matches the longer length_penalty).
 ENV SUBGEN_KWARGS_LANG_JA='{"patience": 1.0, "length_penalty": 1.3}'
+
+# [#63] Release metadata LAST. A changed ARG is a cache miss for every later
+# instruction, so declaring these at the top rebuilt every layer on every
+# release. Here they touch nothing but metadata.
+ARG UPSTREAM_VERSION=unknown
+ARG PATCH_REV=unknown
+# [r9 / subarr#224] The GHCR release tag this image was built from
+# (e.g. v2026.05.3-r9). Emitted in the /queue caps body as
+# subarr_subgen_release_tag so subarr's update check compares
+# like-for-like instead of patch-rev vs date-tag (which made every
+# install show a permanent fake "update available").
+ARG RELEASE_TAG=dev
+ENV SUBARR_SUBGEN_RELEASE_TAG="${RELEASE_TAG}"
+
+LABEL org.opencontainers.image.title="subarr-subgen"
+LABEL org.opencontainers.image.description="McCloudS/subgen + subarr-required patches"
+LABEL org.opencontainers.image.source="https://github.com/coaxk/subarr-subgen"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL subarr.subgen.upstream_version="${UPSTREAM_VERSION}"
+LABEL subarr.subgen.patch_rev="${PATCH_REV}"
+LABEL subarr.subgen.release_tag="${RELEASE_TAG}"
+LABEL subarr.subgen.upstream_source="https://github.com/McCloudS/subgen"
 
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

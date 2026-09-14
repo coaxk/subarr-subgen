@@ -31,6 +31,7 @@ docker build \
   --build-arg "UPSTREAM_VERSION=$UPSTREAM_VERSION" \
   --build-arg "PATCH_REV=$PATCH_REV" \
   --build-arg "RELEASE_TAG=dev-${PATCH_REV}" \
+  --build-arg "APT_REFRESH=$(date -u +%Y-%m-%d)" \
   -f docker/Dockerfile \
   -t "$IMAGE_TAG" \
   -t "subarr-subgen:dev" \
