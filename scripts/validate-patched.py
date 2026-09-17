@@ -287,8 +287,8 @@ def main() -> int:
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.30'",
-            "patch 0052 (patch_rev bump v4.30, latest)",
+            "subarr_subgen_patch_rev = 'v4.31'",
+            "patch 0053 (patch_rev bump v4.31, latest)",
         ),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
