@@ -25,7 +25,10 @@
 # flavour also bundles cuBLAS + cuDNN at the matching version (the old -base
 # relied on whatever cuBLAS happened to be present). Kept on ubuntu22.04
 # (python3.10) to minimise the blast radius.
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+# [#27] 12.8 -> 12.9: the torch fix for CVE-2025-3000 (torch 2.13) is only
+# published on the cu129 index and up; cu128 stops at 2.11. The base CUDA
+# version must match the wheel index (tests/test_dockerfile_layers.py).
+FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04
 
 # [#63] LAYER ORDER IS A DOWNLOAD-SIZE DECISION. Every layer below a changed
 # instruction is rebuilt and becomes a NEW blob users must pull. Until r10 the
@@ -44,10 +47,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ffmpeg python3 python3-pip curl gosu tzdata
 
 # Torch — 4 GB and rarely changes. PINNED: an unpinned `-U` moved torch silently
-# and produced a new 4 GB blob on every rebuild. 2.11.0+cu128 is what r10
-# shipped and was verified against; bump deliberately, in its own change.
+# and produced a new 4 GB blob on every rebuild. Bump deliberately, in its own
+# change, and run scripts/torch-gate.py against the result.
+#
+# [#27] torch 2.13.0 (fixes CVE-2025-3000) with torchaudio 2.11.0, both from
+# cu129. torchaudio's last release is 2.11, so it cannot follow torch's version;
+# it MUST follow torch's CUDA build, or it refuses to import ("compiled with
+# different CUDA versions") and takes stable_whisper and subgen with it.
+# `--no-deps` stops pip resolving torchaudio's own torch pin back to 2.11.
+# Gate run 2026-09-17: resample bit-identical, transcripts identical to r10.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+    python3 -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129 \
+    && python3 -m pip install --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu129
 
 # App dependencies — only rebuilds when requirements.txt changes. Upstream's
 # requirements do not list torch, and pip's default only-if-needed strategy
@@ -55,6 +66,16 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY requirements.txt /
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install -U -r /requirements.txt
+
+# [#27] Refuse to build with a torch pair that cannot run subgen. pip does not
+# catch a CUDA-build mismatch, and the requirements step above could in
+# principle move either package. Importing both is the check torchaudio itself
+# performs; the suffix asserts name the cause if it ever fails.
+RUN python3 -c "import torch, torchaudio, stable_whisper; \
+v, a = torch.__version__, torchaudio.__version__; \
+print('torch', v, 'torchaudio', a, 'stable_whisper', stable_whisper.__version__); \
+assert v.startswith('2.13.0+cu129'), v; \
+assert a.startswith('2.11.0+cu129'), a"
 
 # Security upgrade — its own layer, AFTER the heavy ones. `apt-get upgrade`
 # pulls base-image security patches (the cuda:12.8 base shipped gnupg
