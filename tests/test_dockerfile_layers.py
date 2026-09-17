@@ -66,6 +66,81 @@ def test_torch_is_pinned_to_an_exact_version():
     )
 
 
+def _cuda_index(ins: str) -> str | None:
+    m = re.search(r"download\.pytorch\.org/whl/(cu\d+)", ins)
+    return m.group(1) if m else None
+
+
+def _torch_install_runs() -> list[str]:
+    return [
+        s
+        for s in _instructions()
+        if s.startswith("RUN") and "download.pytorch.org/whl/" in s
+    ]
+
+
+def test_torch_and_torchaudio_come_from_one_cuda_index_matching_the_base():
+    # #27: torchaudio refuses to import when its CUDA build differs from
+    # torch's ("compiled with different CUDA versions"), which takes
+    # stable_whisper and subgen down with it. Measured 2026-09-17 with
+    # torch 2.13+cu129 next to torchaudio 2.11+cu128.
+    runs = _torch_install_runs()
+    assert runs, "no torch install from download.pytorch.org"
+    # Every index URL, not the first per RUN: torch and torchaudio are installed
+    # in ONE RUN, so a per-RUN first match missed a torchaudio pulled from a
+    # different index (caught by mutation, 2026-09-17).
+    indexes = {i for r in runs for i in re.findall(r"download\.pytorch\.org/whl/(cu\d+)", r)}
+    assert len(indexes) == 1, (
+        f"torch and torchaudio from different CUDA indexes: {indexes}"
+    )
+    index = indexes.pop()
+    base = _index(lambda s: s.startswith("FROM"))
+    m = re.search(r"nvidia/cuda:(\d+)\.(\d+)\.", _instructions()[base])
+    assert m, _instructions()[base]
+    assert index == f"cu{m.group(1)}{m.group(2)}", (
+        f"base image is CUDA {m.group(1)}.{m.group(2)} but wheels come from {index}"
+    )
+    joined = " ".join(runs)
+    assert re.search(r"\btorch==\d+\.\d+\.\d+", joined), joined
+    assert re.search(r"\btorchaudio==\d+\.\d+\.\d+", joined), joined
+
+
+def test_the_build_asserts_the_installed_torch_pair():
+    # pip does not catch a torch/torchaudio CUDA mismatch, and a later
+    # requirements install could in principle move either. The image must
+    # refuse to build unless both import and carry the expected CUDA suffix.
+    ins = _instructions()
+    req = _index(lambda s: s.startswith("RUN") and "requirements.txt" in s)
+    checks = [
+        i
+        for i, s in enumerate(ins)
+        if s.startswith("RUN")
+        and "import torch" in s
+        and "torchaudio" in s
+        and "__version__" in s
+    ]
+    assert checks, "no build-time check that imports torch and torchaudio"
+    assert max(checks) > req, "the check must run after the requirements install"
+    index = _cuda_index(" ".join(_torch_install_runs()))
+    assert index and index in ins[max(checks)], (
+        f"the check must assert the {index} suffix on the installed wheels"
+    )
+
+
+def test_setuptools_is_pinned_past_the_vulnerable_mirror_copy():
+    # torch 2.13 pulls setuptools, and the pytorch index only mirrors 78.1.0,
+    # which trivy flags HIGH (CVE-2025-47273, plus vendored jaraco.context
+    # CVE-2026-23949 and wheel CVE-2026-24049). 82+ vendors fixed copies.
+    ins = _instructions()[_torch_run()]
+    m = re.search(r"\bsetuptools==(\d+)\.(\d+)\.(\d+)", ins)
+    assert m, "setuptools must be pinned in the torch layer"
+    assert int(m.group(1)) >= 82, m.group(0)
+    check = [s for s in _instructions() if s.startswith("RUN") and "import torch" in s]
+    assert check and f"'{m.group(1)}.{m.group(2)}.{m.group(3)}'" in check[-1], (
+        "the build check must assert the pinned setuptools version"
+    )
+
+
 def test_release_metadata_comes_after_every_heavy_layer():
     ins = _instructions()
     last_run = max(i for i, s in enumerate(ins) if s.startswith("RUN"))
