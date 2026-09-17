@@ -56,9 +56,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # different CUDA versions") and takes stable_whisper and subgen with it.
 # `--no-deps` stops pip resolving torchaudio's own torch pin back to 2.11.
 # Gate run 2026-09-17: resample bit-identical, transcripts identical to r10.
+#
+# setuptools: torch 2.13 requires `setuptools>=77.0.3` (2.11 did not), and the
+# pytorch index only mirrors 78.1.0, which trivy flags HIGH three times over:
+# CVE-2025-47273 in setuptools itself, plus its vendored jaraco.context 5.3.0
+# (CVE-2026-23949) and wheel 0.45.1 (CVE-2026-24049). setuptools 82+ vendors
+# the fixed jaraco.context 6.1.0 and wheel 0.46.3; pin 84.0.0 from PyPI in the
+# same layer so the vulnerable copy never ships.
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129 \
-    && python3 -m pip install --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu129
+    && python3 -m pip install --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu129 \
+    && python3 -m pip install setuptools==84.0.0
 
 # App dependencies — only rebuilds when requirements.txt changes. Upstream's
 # requirements do not list torch, and pip's default only-if-needed strategy
@@ -71,11 +79,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # catch a CUDA-build mismatch, and the requirements step above could in
 # principle move either package. Importing both is the check torchaudio itself
 # performs; the suffix asserts name the cause if it ever fails.
-RUN python3 -c "import torch, torchaudio, stable_whisper; \
-v, a = torch.__version__, torchaudio.__version__; \
-print('torch', v, 'torchaudio', a, 'stable_whisper', stable_whisper.__version__); \
+RUN python3 -c "import torch, torchaudio, stable_whisper, setuptools; \
+v, a, st = torch.__version__, torchaudio.__version__, setuptools.__version__; \
+print('torch', v, 'torchaudio', a, 'stable_whisper', stable_whisper.__version__, 'setuptools', st); \
 assert v.startswith('2.13.0+cu129'), v; \
-assert a.startswith('2.11.0+cu129'), a"
+assert a.startswith('2.11.0+cu129'), a; \
+assert st == '84.0.0', st"
 
 # Security upgrade — its own layer, AFTER the heavy ones. `apt-get upgrade`
 # pulls base-image security patches (the cuda:12.8 base shipped gnupg

@@ -127,6 +127,20 @@ def test_the_build_asserts_the_installed_torch_pair():
     )
 
 
+def test_setuptools_is_pinned_past_the_vulnerable_mirror_copy():
+    # torch 2.13 pulls setuptools, and the pytorch index only mirrors 78.1.0,
+    # which trivy flags HIGH (CVE-2025-47273, plus vendored jaraco.context
+    # CVE-2026-23949 and wheel CVE-2026-24049). 82+ vendors fixed copies.
+    ins = _instructions()[_torch_run()]
+    m = re.search(r"\bsetuptools==(\d+)\.(\d+)\.(\d+)", ins)
+    assert m, "setuptools must be pinned in the torch layer"
+    assert int(m.group(1)) >= 82, m.group(0)
+    check = [s for s in _instructions() if s.startswith("RUN") and "import torch" in s]
+    assert check and f"'{m.group(1)}.{m.group(2)}.{m.group(3)}'" in check[-1], (
+        "the build check must assert the pinned setuptools version"
+    )
+
+
 def test_release_metadata_comes_after_every_heavy_layer():
     ins = _instructions()
     last_run = max(i for i, s in enumerate(ins) if s.startswith("RUN"))
