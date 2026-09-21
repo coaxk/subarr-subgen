@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Mon, 21 Sep 2026 11:05:00 +1000
+Subject: [PATCH] 0055: bump patch rev to v4.32
+
+Ships 0054: a direct (queue-bypassing) model use is now claimed atomically
+against the idle model cleanup, so /detect-language can no longer fail with
+"No model replica is available in this thread" when a request lands between
+the cleanup's idle check and its unload (subarr-subgen#69).
+
+Behaviour change on a real endpoint, so the rev moves: an install on this
+image is distinguishable, and subarr can tell whether the subgen it is
+talking to still has the race.
+---
+diff --git a/subgen.py b/subgen.py
+--- a/subgen.py
++++ b/subgen.py
+@@ -2,7 +2,7 @@ subgen_version = '2026.08.1'
+ # [v4.3 PATCH] subarr-subgen patch-stack revision, surfaced via /queue so subarr
+ # can detect our extended capabilities (audio_language_override, etc.) and
+ # degrade gracefully against vanilla mccloud/subgen which lacks them.
+-subarr_subgen_patch_rev = 'v4.31'
++subarr_subgen_patch_rev = 'v4.32'
+
+ """
+ ENVIRONMENT VARIABLES DOCUMENTATION
+--
+2.43.0
+

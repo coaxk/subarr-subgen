@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Mon, 21 Sep 2026 10:59:25 +1000
+Subject: [PATCH] 0054: claim a direct task atomically against the model
+ cleanup
+
+perform_model_cleanup() reads 'is the system idle' and then unloads the
+model, holding model_cleanup_lock across both. A direct request only
+incremented active_direct_tasks, so a request arriving AFTER that read but
+BEFORE the unload was counted by nobody and ran against a model being torn
+down: 'No model replica is available in this thread', four times on
+2026-09-19, each a failed Bazarr detect call (subarr-subgen#69).
+
+direct_task_claim() takes model_cleanup_lock for the increment - the same
+lock the cleanup holds across its read-and-unload - so either the claim
+lands first and the cleanup then sees a non-zero counter and skips, or the
+unload completes first and the caller's start_model() re-creates the model.
+Lock order matches perform_model_cleanup (cleanup lock, then counter lock),
+which is what keeps it deadlock-free, and the cleanup lock is released
+before the caller loads or runs the model so a long transcription never
+blocks a cleanup timer.
+
+Applied to both direct paths: /detect-language and /detect-language-robust,
+which had the identical shape.
+---
+ subgen.py | 67 +++++++++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 55 insertions(+), 12 deletions(-)
+
+diff --git a/subgen.py b/subgen.py
+index 61eca2b..822d86d 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -49,6 +49,7 @@ transition period. The old names may be deprecated in future versions.
+ import ast
+ import asyncio
+ import ctypes
++from contextlib import contextmanager
+ import ctypes.util
+ import gc
+ import hashlib
+@@ -427,6 +428,50 @@ _config_switch_state = {
+ active_direct_tasks = 0
+ active_direct_tasks_lock = Lock()
+ 
++
++@contextmanager
++def direct_task_claim():
++    """[PATCH 0054 / #69] Claim a direct (queue-bypassing) use of the model.
++
++    The counter alone is not enough. perform_model_cleanup() reads
++    `task_queue.is_idle() and active_direct_tasks == 0` and then unloads the
++    model, and it holds `model_cleanup_lock` across both. A request that
++    incremented the counter AFTER that read but BEFORE the unload was counted
++    by nobody: the cleanup had already decided the system was idle, and it
++    pulled the model out from under the request mid-inference. That surfaced as
++    `No model replica is available in this thread` - four times on 2026-09-19,
++    each one a failed Bazarr detect call (subarr-subgen#69):
++
++        14.057  Executing scheduled model cleanup
++        14.057  Queue and direct tasks idle; clearing model from memory.
++        14.126  Immediate language detection (Queue Bypass) for <file>
++        14.145  Model unloaded from memory
++        14.398  Error in API detect-language: No model replica is available
++
++    Taking `model_cleanup_lock` for the increment closes the window, because it
++    is the same lock the cleanup holds across its read-and-unload. Either the
++    claim lands first and the cleanup then reads a non-zero counter and skips,
++    or the unload finishes first and the caller's start_model() re-creates the
++    model. There is no longer an order in which the model can disappear between
++    the check and the use.
++
++    Lock order is `model_cleanup_lock` then `active_direct_tasks_lock`, matching
++    perform_model_cleanup(); acquiring them in the same order in both places is
++    what keeps this deadlock-free. The cleanup lock is released before the
++    caller loads or runs the model, so a long transcription never blocks a
++    cleanup timer - by then the counter is non-zero, which is what the cleanup
++    reads.
++    """
++    global active_direct_tasks
++    with model_cleanup_lock:
++        with active_direct_tasks_lock:
++            active_direct_tasks += 1
++    try:
++        yield
++    finally:
++        with active_direct_tasks_lock:
++            active_direct_tasks -= 1
++
+ in_docker = os.path.exists('/.dockerenv')
+ docker_status = "Docker" if in_docker else "Standalone"
+ 
+@@ -1892,9 +1937,12 @@ async def detect_language(
+             
+         logging.info("Immediate language detection (Queue Bypass)" + (f" for {video_file}" if video_file else ""))
+         
+-        # Track that we are directly using the model outside the queue
+-        with active_direct_tasks_lock:
+-            active_direct_tasks += 1
++        # Track that we are directly using the model outside the queue.
++        # [PATCH 0054 / #69] via direct_task_claim(), which also excludes an
++        # in-progress model cleanup - the counter alone left a window in which
++        # the model was unloaded mid-inference.
++        _claim = direct_task_claim()
++        _claim.__enter__()
+         task_started = True
+         
+         # --- RUN IMMEDIATELY ---
+@@ -1931,8 +1979,7 @@ async def detect_language(
+         await audio_file.close()
+         # Decrement counter so delete_model() knows we are done
+         if task_started:
+-            with active_direct_tasks_lock:
+-                active_direct_tasks -= 1
++            _claim.__exit__(None, None, None)  # [PATCH 0054 / #69] releases the claim
+             delete_model() # Schedules VRAM cleanup if system is idle
+ 
+ # ============================================================================
+@@ -2243,15 +2290,11 @@ def detect_language_robust(
+         return JSONResponse({"error": "path is outside the allowed media root"}, status_code=403)
+     # [PATCH 0025 / #13] count toward active_direct_tasks so /config's busy-check
+     # won't unload the model mid-detection (0011 ran inference untracked).
+-    global active_direct_tasks
+-    with active_direct_tasks_lock:
+-        active_direct_tasks += 1
+-    try:
++    # [PATCH 0054 / #69] same claim as /detect-language: incrementing the
++    # counter without excluding an in-progress cleanup left the same window.
++    with direct_task_claim():
+         return detect_language_robust_task(mapped, chunks=chunks,
+                                            chunk_length_s=chunk_length_s, track=track)
+-    finally:
+-        with active_direct_tasks_lock:
+-            active_direct_tasks -= 1
+ 
+ 
+ def extract_audio_segment_to_memory(input_file, start_time, duration, track=None):
