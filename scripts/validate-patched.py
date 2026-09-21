@@ -287,9 +287,31 @@ def main() -> int:
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.31'",
-            "patch 0053 (patch_rev bump v4.31, latest)",
+            "subarr_subgen_patch_rev = 'v4.32'",
+            "patch 0055 (patch_rev bump v4.32, latest)",
         ),
+        # --- patch 0054 (#69: direct-task claim) ------------------------------
+        # perform_model_cleanup() reads "is the system idle" and then unloads
+        # the model, holding model_cleanup_lock across both. Incrementing
+        # active_direct_tasks alone leaves a window between that read and the
+        # unload in which a request runs against a model being torn down, which
+        # surfaced as "No model replica is available in this thread" on live
+        # Bazarr detect calls. The claim must take model_cleanup_lock, and BOTH
+        # direct paths must go through it -- a re-port that keeps the helper but
+        # restores a bare increment at either call site brings the race back.
+        ("def direct_task_claim():", "patch 0054 (#69 direct-task claim exists)"),
+        (
+            "\n".join(
+                [
+                    "    with model_cleanup_lock:",
+                    "        with active_direct_tasks_lock:",
+                    "            active_direct_tasks += 1",
+                ]
+            ),
+            "patch 0054 (#69 claim excludes the cleanup)",
+        ),
+        ("_claim = direct_task_claim()", "patch 0054 (#69 /detect-language claims)"),
+        ("with direct_task_claim():", "patch 0054 (#69 robust detect claims)"),
         # --- patch 0039 (#458 follow-on: per-request bypass_skip) -------------
         # The bypass must reach should_skip_file. Every link in the chain is
         # asserted separately: a missing kwarg anywhere in
