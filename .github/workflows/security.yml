@@ -108,6 +108,10 @@ jobs:
                       /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
           sudo docker image prune -af || true
           df -h /
+          # /tmp is a RAM-sized tmpfs with a per-user quota on ubuntu-26.04
+          # runners; printed so the trivy TMPDIR choice below stays checkable.
+          findmnt -no FSTYPE,SIZE,OPTIONS /tmp || true
+          df -h /tmp "$RUNNER_TEMP"
       - name: build image (no push)
         run: bash scripts/build.sh
       # Split into a gate + an artifact producer. In format=sarif mode,
@@ -120,8 +124,16 @@ jobs:
       # Bit us 2026-07-21: CVE-2025-3000 in torch (trivy severity LOW, no fix
       # available for the cu128 wheel) reddened main even though the gate is
       # declared HIGH,CRITICAL. Same split as coaxk/subarr's security.yml.
+      #
+      # TMPDIR: trivy copies the whole image out of the Docker daemon into
+      # TMPDIR (docker-export-*) before analysing it. ubuntu-latest moved to
+      # ubuntu-26.04 on 2026-10-21, where /tmp is a tmpfs with a per-user
+      # quota, and the multi-GB CUDA image failed both scans with "disk quota
+      # exceeded". runner.temp is on the root disk.
       - name: trivy scan (gate)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
           image-ref: subarr-subgen:dev
           format: table
@@ -136,6 +148,8 @@ jobs:
         # findings stay visible.
         if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
           image-ref: subarr-subgen:dev
           format: sarif
