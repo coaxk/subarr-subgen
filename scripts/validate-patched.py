@@ -341,8 +341,8 @@ def main() -> int:
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.36'",
-            "patch 0060 (patch_rev bump v4.36, latest)",
+            "subarr_subgen_patch_rev = 'v4.37'",
+            "patch 0061 (patch_rev bump v4.37, latest)",
         ),
         # --- patch 0054 (#69: direct-task claim) ------------------------------
         # perform_model_cleanup() reads "is the system idle" and then unloads
