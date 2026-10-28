@@ -140,6 +140,8 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+          # Scoped, expiring exceptions with the reasoning for each.
+          trivyignores: .trivyignore.yaml
           timeout: "20m"
           scanners: vuln
       - name: trivy scan (SARIF artifact)
@@ -159,6 +161,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "0"
           ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
           # The cu128 torch stack ships a ~2GB libtorch_cuda.so; trivy's
           # default 5m deadline isn't enough to walk it and it dies with
           # "context deadline exceeded" (#163 fallout). Give it room.
