@@ -29,7 +29,7 @@ FAILS = []
 
 # Update this together with subarr's copy of the fixture (tests/
 # test_per_file_task_633.py). A change on one side only fails one suite loudly.
-FIXTURE_SHA256 = "fb9ac252754a8c744f23aa82ef9cb262590d806ffb9bb22485087184c797561e"
+FIXTURE_SHA256 = "e00b59d02962493ec0930c492e97a5838543f8454e9041ca79bd42f403de7b1d"
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "track_choice_cases.json")
 
@@ -73,6 +73,11 @@ def main():
             got = result.to_iso_639_1()
             check(f"choose: {case['name']}", got == case["expected_source"],
                   f"expected {case['expected_source']!r} got {got!r}")
+            # The conversion subarr never sees (preferred -> advertised) is part
+            # of the contract: subarr feeds preferred_advertised to its resolver.
+            adv = subgen.queue_status()["capabilities"]["preferred_audio_languages"]
+            check(f"advertised: {case['name']}", adv == case["preferred_advertised"],
+                  f"expected {case['preferred_advertised']!r} got {adv!r}")
 
         # The capabilities block must reflect the module globals, null entries
         # kept in place, duplicates kept, order kept.
