@@ -240,6 +240,113 @@ def validate_skip_reasons(tree) -> None:
     ok(f"patch 0065 (#669 every should_skip_file skip carries a reason, {len(tagged)} branches)")
 
 
+def validate_task_naming(tree) -> None:
+    """Patch 0067 (coaxk/subarr-subgen#89): naming and skip checks follow the per-file task.
+
+    The WORK already used the per-file task, but the naming helper,
+    name_subtitle, should_skip_file and the language-detection hop still read
+    the global transcribe_or_translate. A per-request task then wrote the right
+    text under the wrong language name (or skipped the wrong sidecar). Every
+    link in that chain is asserted separately: any one reverted leaves the
+    output misnamed while the transcription itself still looks correct.
+    """
+    names = [
+        "define_subtitle_language_naming",
+        "name_subtitle",
+        "should_skip_file",
+        "gen_subtitles",
+        "gen_subtitles_queue",
+        "detect_language_task",
+        "_effective_task",
+    ]
+    found = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.FunctionDef) and n.name in names:
+            found.setdefault(n.name, n)
+    missing = [name for name in names if name not in found]
+    if missing:
+        fail(f"missing function(s) {missing} - patch 0067")
+
+    for name in ("define_subtitle_language_naming", "name_subtitle", "should_skip_file"):
+        params = found[name].args.args + found[name].args.kwonlyargs
+        if not any(a.arg == "task" for a in params):
+            fail(f"{name}() has no `task` parameter - patch 0067")
+
+    for name in ("define_subtitle_language_naming", "should_skip_file"):
+        for sub in ast.walk(found[name]):
+            if (
+                isinstance(sub, ast.Compare)
+                and isinstance(sub.left, ast.Name)
+                and sub.left.id == "transcribe_or_translate"
+            ):
+                fail(
+                    f"{name}() compares the global transcribe_or_translate directly "
+                    f"at line {sub.lineno} - patch 0067"
+                )
+
+    def calls(fn_node, callee):
+        return [
+            n
+            for n in ast.walk(fn_node)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == callee
+        ]
+
+    def has_task_kw(call, value_name):
+        return any(
+            kw.arg == "task"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == value_name
+            for kw in call.keywords
+        )
+
+    for call in calls(found["gen_subtitles"], "name_subtitle"):
+        if not has_task_kw(call, "transcription_type"):
+            fail(
+                f"gen_subtitles() calls name_subtitle() without task=transcription_type "
+                f"at line {call.lineno} - patch 0067"
+            )
+    for call in calls(found["gen_subtitles_queue"], "should_skip_file"):
+        if not has_task_kw(call, "transcription_type"):
+            fail(
+                f"gen_subtitles_queue() calls should_skip_file() without "
+                f"task=transcription_type at line {call.lineno} - patch 0067"
+            )
+    for call in calls(found["should_skip_file"], "name_subtitle"):
+        if not has_task_kw(call, "task"):
+            fail(
+                f"should_skip_file() calls name_subtitle() without task=task "
+                f"at line {call.lineno} - patch 0067"
+            )
+
+    for call in calls(found["name_subtitle"], "define_subtitle_language_naming"):
+        if not has_task_kw(call, "task"):
+            fail(
+                f"name_subtitle() calls define_subtitle_language_naming() without "
+                f"task=task at line {call.lineno} - patch 0067"
+            )
+
+    task_dicts = 0
+    for sub in ast.walk(found["gen_subtitles_queue"]):
+        if not isinstance(sub, ast.Dict):
+            continue
+        for key, value in zip(sub.keys, sub.values):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "transcribe_or_translate"
+                and isinstance(value, ast.Name)
+                and value.id == "transcription_type"
+            ):
+                task_dicts += 1
+    if task_dicts < 2:
+        fail(
+            f"gen_subtitles_queue() carries the per-file task in only {task_dicts} "
+            f"task dict(s), expected 2 (detect + transcribe) - patch 0067"
+        )
+    ok("patch 0067 (#89 naming and skip checks follow the per-file task)")
+
+
 def main() -> int:
     if not TARGET.is_file():
         fail(f"{TARGET} not found — did you run apply-patches.sh?")
@@ -381,8 +488,8 @@ def main() -> int:
         # whenever a new bump patch is added (0030 -> v4.17 went stale when 0032
         # landed v4.18, and this check failed silently behind an apply failure).
         (
-            "subarr_subgen_patch_rev = 'v4.40'",
-            "patch 0066 (patch_rev bump v4.40, latest)",
+            "subarr_subgen_patch_rev = 'v4.41'",
+            "patch 0068 (patch_rev bump v4.41, latest)",
         ),
         # --- patch 0054 (#69: direct-task claim) ------------------------------
         # perform_model_cleanup() reads "is the system idle" and then unloads
@@ -493,6 +600,7 @@ def main() -> int:
     validate_launcher()
     validate_failed_load_release(tree)
     validate_skip_reasons(tree)
+    validate_task_naming(tree)
 
     print()
     print("VALIDATE: all gates passed.")

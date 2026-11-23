@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: subarr-subgen <subarr@localhost>
+Date: Tue, 24 Nov 2026 12:00:00 +1100
+Subject: [PATCH] 0067: name subtitles and run skip checks with the per-file task
+
+Fixes coaxk/subarr-subgen#89. The naming helper, name_subtitle and should_skip_file all read the global transcribe_or_translate instead of the per-file task, and the detect task did not carry its task to the follow-up, so a per-request task=transcribe on a translate install produced Spanish text named .en.srt. They now take the per-file task and fall back to the global when it is absent.
+---
+diff --git a/subgen.py b/subgen.py
+index 4a84075..99d7e1f 100644
+--- a/subgen.py
++++ b/subgen.py
+@@ -2162,7 +2162,7 @@ def detect_language_task(path, original_task_data=None):
+     task_data = {
+         'path': path,
+         'type': 'transcribe',
+-        'transcribe_or_translate': transcribe_or_translate,
++        'transcribe_or_translate': (original_task_data or {}).get('transcribe_or_translate') or transcribe_or_translate,
+         'force_language': detected_language
+     }
+     
+@@ -2623,7 +2623,7 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
+             subtitle_file_path = file_name + '.lrc'
+             write_lrc(result, subtitle_file_path)
+         else:
+-            subtitle_file_path = name_subtitle(file_path, output_language)
++            subtitle_file_path = name_subtitle(file_path, output_language, task=transcription_type)
+             result.to_srt_vtt(subtitle_file_path, word_level=word_level_highlight)
+             
+         # Trigger the downstream webhook
+@@ -2644,13 +2644,18 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
+     finally:
+         delete_model()
+         
+-def define_subtitle_language_naming(language: LanguageCode, type):
++def _effective_task(task=None) -> str:
++    """The per-file task when given, else the global TRANSCRIBE_OR_TRANSLATE."""
++    return str(task).lower() if task else str(transcribe_or_translate).lower()
++
++def define_subtitle_language_naming(language: LanguageCode, type, task=None):
+     """
+     Determines the naming format for a subtitle language based on the given type. 
+ 
+     Args:
+         language (LanguageCode): The language code object containing methods to get different formats of the language name.
+         type (str): The type of naming format desired, such as 'ISO_639_1', 'ISO_639_2_T', 'ISO_639_2_B', 'NAME', or 'NATIVE'.
++        task (str): The per-file task; falls back to the global TRANSCRIBE_OR_TRANSLATE when omitted.
+ 
+     Returns:
+         str: The language name in the specified format. If an invalid type is provided, it defaults to the language's name.
+@@ -2661,7 +2666,7 @@ def define_subtitle_language_naming(language: LanguageCode, type):
+     # This MUST come before switch_dict is built: its values are bound methods,
+     # captured against whatever `language` refers to at construction time. Rebinding
+     # `language` afterwards would leave them pointing at the original language.
+-    if transcribe_or_translate == 'translate':
++    if _effective_task(task) == 'translate':
+         language = LanguageCode.ENGLISH
+     switch_dict = {
+         "ISO_639_1": language.to_iso_639_1,
+@@ -2672,20 +2677,21 @@ def define_subtitle_language_naming(language: LanguageCode, type):
+     }
+     return switch_dict.get(type, language.to_name)()
+ 
+-def name_subtitle(file_path: str, language: LanguageCode) -> str:
++def name_subtitle(file_path: str, language: LanguageCode, task=None) -> str:
+     """
+     Name the subtitle file to be written, based on the source file and the language of the subtitle. 
+     
+     Args: 
+         file_path: The path to the source file.
+         language: The language of the subtitle.
++        task: The per-file task; falls back to the global TRANSCRIBE_OR_TRANSLATE when omitted.
+     
+     Returns:
+         The name of the subtitle file to be written.
+     """
+     subgen_part = ".subgen" if show_in_subname_subgen else ""
+     model_part = f".{whisper_model}" if show_in_subname_model else ""
+-    lang_part = define_subtitle_language_naming(language, subtitle_language_naming_type)
++    lang_part = define_subtitle_language_naming(language, subtitle_language_naming_type, task=task)
+     
+     return f"{os.path.splitext(file_path)[0]}{subgen_part}{model_part}.{lang_part}.srt"
+     
+@@ -2935,12 +2941,17 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
+ 
+     if should_skip_file(file_path, force_language, audio_langs=audio_langs,
+                         ignore_forced_override=ignore_forced_override,
++                        task=transcription_type,
+                         bypass_skip=bypass_skip):
+         return "skipped"
+ 
+     # Detect audio language via Whisper if no language is known and detection is enabled
+     if not force_language and should_whisper_detect_audio_language:
+-        detect_task = {'path': file_path, 'type': "detect_language"}
++        detect_task = {
++            'path': file_path,
++            'type': "detect_language",
++            'transcribe_or_translate': transcription_type,
++        }
+         detect_task.update(task_kwargs)
+         task_queue.put(detect_task)
+         return "detect_pending"
+@@ -2996,7 +3007,7 @@ def _skip_because(reason: str) -> bool:
+ 
+ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=None,
+                      ignore_forced_override: bool | None = None,
+-                     bypass_skip: bool = False) -> bool:
++                     bypass_skip: bool = False, task=None) -> bool:
+     """
+     Determines if subtitle generation should be skipped for a file.
+ 
+@@ -3004,6 +3015,7 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
+         file_path: Path to the media file.
+         target_language: The desired language for transcription.
+         audio_langs: Pre-fetched list of audio LanguageCodes; fetched if not provided.
++        task: The per-file task; falls back to the global TRANSCRIBE_OR_TRANSLATE when omitted.
+ 
+     Returns:
+         True if the file should be skipped, False otherwise.
+@@ -3035,7 +3047,7 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
+     if bypass_skip:
+         logging.info(f"[v4.23 PATCH] bypass_skip -- skip checks bypassed by request for {base_name}")
+         return False
+-    if transcribe_or_translate == 'translate':
++    if _effective_task(task) == 'translate':
+         target_language = LanguageCode.ENGLISH  # Force our target language as english if we are translating
+ 
+     # 1. Skip if it's an audio file and an LRC file already exists.
+@@ -3094,7 +3106,7 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
+                 return _skip_because("named_sub")
+ 
+         # Check: Does the exact file Subgen intends to create already exist?
+-        expected_output = name_subtitle(file_path, target_language)
++        expected_output = name_subtitle(file_path, target_language, task=task)
+         if os.path.exists(expected_output):
+             logging.info(f"Skipping {base_name}: Generated subtitle '{os.path.basename(expected_output)}' already exists.")
+             return _skip_because("output_exists")
