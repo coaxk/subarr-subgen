@@ -47,6 +47,30 @@ image only serves paths under a colon-separated allowlist, default `/media`
 `directory is outside the allowed media root`. An empty value disables the
 guard; do not do that on a network you share.
 
+### Subtitle file names with subarr: set `SUBTITLE_LANGUAGE_NAMING_TYPE=ISO_639_1`
+
+subgen names its output by the language it wrote, in the format
+`SUBTITLE_LANGUAGE_NAMING_TYPE` picks. The default, `ISO_639_2_B`, gives
+three-letter suffixes such as `.nor.srt`. subarr's Bazarr write-back labels the
+same transcript with the two-letter code (`no`), so Bazarr then writes `.no.srt`
+and one language ends up with two sidecar names. With subarr, set:
+
+```yaml
+    environment:
+      - SUBTITLE_LANGUAGE_NAMING_TYPE=ISO_639_1   # .no.srt, .en.srt, .es.srt
+```
+
+The suffix still follows each file's own language. Do **not** use
+`SUBTITLE_LANGUAGE_NAME` (legacy `NAMESUBLANG`) for this: it replaces the suffix
+with one fixed value for every file, so setting it to `no` in a library with
+more than one language mislabels everything that is not Norwegian. Leave it
+unset. ([#92](https://github.com/coaxk/subarr-subgen/issues/92))
+
+A translated file is always named as English. Since patch 0067 (v4.41) that
+follows the task of each request, so a `/batch?task=transcribe` on an install
+with `TRANSCRIBE_OR_TRANSLATE=translate` is named by its spoken language
+([#89](https://github.com/coaxk/subarr-subgen/issues/89)).
+
 If you don't run subarr, you probably don't need this. Use upstream
 `mccloud/subgen:latest` instead.
 
